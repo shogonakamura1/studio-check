@@ -1,8 +1,16 @@
+/**
+ * 空き状況APIエンドポイント
+ * 
+ * - BUZZスタジオ: Vercel内でcheerioを使用してスクレイピング
+ * - 福岡市民会館/CREA: Render APIに委譲（Playwright使用）
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse, CreaResponse } from "@/types";
-import { scrapeFukuokaCivicHall } from "@/lib/scrapers/fukuoka-civic-hall";
-import { scrapeCrea, CREA_STUDIOS } from "@/lib/scrapers/crea";
+
+// Render APIのベースURL（環境変数で設定）
+const RENDER_API_URL = process.env.RENDER_API_URL || "https://studio-check-api.onrender.com";
 
 // スタジオ情報のマスターデータ
 const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number; type?: string }> = {
@@ -34,26 +42,25 @@ const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: numb
   fukuokacivichall: {
     name: "福岡市民会館",
     url: "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php",
-    studioCount: 3, // リハーサル室、練習室①、練習室③
+    studioCount: 3,
     type: "civic-hall",
   },
-  // CREAスタジオ
   crea: {
     name: "レンタルスタジオCREA",
     url: "https://coubic.com/rentalstudiocrea",
-    studioCount: 4, // CREA大名、CREA+、CREA大名Ⅱ、CREA music
+    studioCount: 4,
     type: "crea",
   },
 };
 
-// 曜日を取得するヘルパー関数
+// 曜日を取得
 function getDayOfWeek(dateStr: string): string {
   const days = ["日", "月", "火", "水", "木", "金", "土"];
   const date = new Date(dateStr);
   return days[date.getDay()];
 }
 
-// BUZZスタジオ用スクレイピング関数
+// BUZZスタジオ用スクレイピング（Vercel内で実行）
 async function scrapeBuzzAvailability(
   studioId: string,
   date: string
@@ -90,25 +97,18 @@ async function scrapeBuzzAvailability(
 
     const timeSlots: TimeSlot[] = [];
 
-    // テーブルの各行を処理
     $("table tbody tr").each((_, row) => {
       const $row = $(row);
       const timeCell = $row.find("td:first-child").text().trim();
 
-      // 時間が含まれている行のみ処理
       if (timeCell && /^\d{2}:\d{2}$/.test(timeCell)) {
         const studios: StudioAvailability[] = [];
 
-        // 各スタジオのセルを処理（最初のセルは時間なのでスキップ）
         $row.find("td").each((idx, cell) => {
-          if (idx === 0) return; // 時間セルをスキップ
+          if (idx === 0) return;
 
           const $cell = $(cell);
           const button = $cell.find("button");
-
-          // ボタンのクラス名で空き状況を判定
-          // reserve_modal_trigger = 空き
-          // studio_reserve_time_table_close = 予約済み
           const isAvailable = button.hasClass("reserve_modal_trigger");
 
           studios.push({
@@ -144,7 +144,7 @@ async function scrapeBuzzAvailability(
   }
 }
 
-// 福岡市民会館用スクレイピング関数
+// 福岡市民会館用（Render APIに委譲）
 async function scrapeCivicHallAvailability(
   studioId: string,
   date: string
@@ -152,17 +152,36 @@ async function scrapeCivicHallAvailability(
   const studioInfo = STUDIO_DATA[studioId];
 
   try {
-    const rooms = await scrapeFukuokaCivicHall(date);
+    console.log(`[CivicHall] Render APIにリクエスト: ${RENDER_API_URL}/api/scrape/civic-hall?date=${date}`);
+    
+    const response = await fetch(`${RENDER_API_URL}/api/scrape/civic-hall?date=${date}`, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+      // Render無料プランはスリープするため、長めのタイムアウト
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || "Render APIからエラーが返されました");
+    }
 
     return {
       studioId,
       studioName: studioInfo.name,
       date,
       dayOfWeek: getDayOfWeek(date),
-      rooms,
+      rooms: data.rooms || [],
     };
   } catch (error) {
-    console.error(`Error scraping ${studioId}:`, error);
+    console.error(`Error fetching civic-hall from Render:`, error);
     return {
       studioId,
       studioName: studioInfo.name,
@@ -174,7 +193,7 @@ async function scrapeCivicHallAvailability(
   }
 }
 
-// CREA用スクレイピング関数
+// CREA用（Render APIに委譲）
 async function scrapeCreaAvailability(
   studioId: string,
   date: string
@@ -182,17 +201,35 @@ async function scrapeCreaAvailability(
   const studioInfo = STUDIO_DATA[studioId];
 
   try {
-    const studios = await scrapeCrea(date);
+    console.log(`[CREA] Render APIにリクエスト: ${RENDER_API_URL}/api/scrape/crea?date=${date}`);
+    
+    const response = await fetch(`${RENDER_API_URL}/api/scrape/crea?date=${date}`, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || "Render APIからエラーが返されました");
+    }
 
     return {
       studioId,
       studioName: studioInfo.name,
       date,
       dayOfWeek: getDayOfWeek(date),
-      studios,
+      studios: data.studios || [],
     };
   } catch (error) {
-    console.error(`Error scraping ${studioId}:`, error);
+    console.error(`Error fetching crea from Render:`, error);
     return {
       studioId,
       studioName: studioInfo.name,
@@ -222,19 +259,22 @@ async function scrapeAvailability(
     };
   }
 
+  // 福岡市民会館 → Render API
   if (studioInfo.type === "civic-hall") {
     return scrapeCivicHallAvailability(studioId, date);
   }
 
+  // CREA → Render API
   if (studioInfo.type === "crea") {
     return scrapeCreaAvailability(studioId, date);
   }
 
+  // BUZZ系 → Vercel内で実行
   return scrapeBuzzAvailability(studioId, date);
 }
 
-// Vercel Serverless Functionsのタイムアウト設定
-export const maxDuration = 60; // Pro plan: 60s, Hobby: 10s
+// Vercel Serverless Functionsの設定
+export const maxDuration = 120; // 長めに設定（Render APIの応答待ち）
 export const dynamic = 'force-dynamic';
 
 // GET /api/availability?studios=fukuokahonten,fukuokatenjin&date=2026-01-20
@@ -259,12 +299,6 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // CREAが含まれている場合の警告（Playwright使用で時間がかかる）
-  const hasCrea = studioIds.some(id => id.trim() === 'crea');
-  if (hasCrea && studioIds.length > 2) {
-    console.warn('⚠️ CREAを含む複数スタジオのリクエスト: タイムアウトの可能性あり');
-  }
-
   try {
     // 並列でスクレイピング
     const results = await Promise.all(
@@ -286,7 +320,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       { 
         error: error instanceof Error ? error.message : 'スクレイピングに失敗しました',
-        hint: 'Vercel Hobbyプランの場合、タイムアウト制限（10秒）により失敗する可能性があります。Proプランをご検討ください。'
       },
       { status: 500 }
     );

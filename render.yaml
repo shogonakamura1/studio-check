@@ -1,13 +1,17 @@
+# Render設定ファイル
+# スクレイピングAPIサーバー（Playwright使用）
+
 services:
   - type: web
-    name: studio-check
+    name: studio-check-api
     env: node
     region: oregon
     plan: free
-    buildCommand: npm install && npx playwright install chromium && npm run build
-    startCommand: npm start
+    buildCommand: npm install && npx playwright install chromium --with-deps
+    startCommand: npm run api:start
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: CREA_AUTH_STATE
-        sync: false  # Set this manually in Render Dashboard
+      - key: CREA_AUTH_JSON
+        sync: false  # Renderダッシュボードで手動設定

@@ -1,4 +1,11 @@
-import { launchBrowser, createPage, waitForNetworkIdle, clickByText, wait, type Browser, type Page } from "./browser";
+/**
+ * 並列スクレイパー
+ * 
+ * 福岡市民会館とCREAを並列でスクレイピング
+ * Render APIサーバーから呼び出される
+ */
+
+import { chromium, type Browser, type Page, type BrowserContext } from "playwright";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -113,11 +120,7 @@ function isSlotApplicable(days: string, date: Date): boolean {
   }
 }
 
-/**
- * 認証情報を取得
- */
 function getAuthData(): object | null {
-  // 環境変数から認証情報を取得（Vercel用）
   if (process.env.CREA_AUTH_JSON) {
     try {
       return JSON.parse(process.env.CREA_AUTH_JSON);
@@ -127,7 +130,6 @@ function getAuthData(): object | null {
     }
   }
 
-  // ローカルファイルから認証情報を取得
   const authPath = path.join(process.cwd(), "auth-crea.json");
   if (fs.existsSync(authPath)) {
     try {
@@ -145,25 +147,17 @@ function getAuthData(): object | null {
 // Fukuoka Civic Hall Scraper
 async function scrapeFukuoka(page: Page, targetDate: string): Promise<FukuokaRoom[]> {
   const url = "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php";
-  await page.goto(url, { waitUntil: "networkidle0", timeout: 60000 });
+  await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
   
-  // Navigate to facility view
-  await clickByText(page, "施設毎の空き状況");
-  await waitForNetworkIdle(page);
+  await page.locator('li a:has-text("施設毎の空き状況")').first().click();
+  await page.waitForLoadState("networkidle");
 
-  // Format target date for comparison
   const formattedTargetDate = targetDate.replace(/-/g, "/");
   const targetDateObj = new Date(targetDate);
 
-  // Navigate to target date
   const maxAttempts = 60;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    // Get current date from h3 heading
-    const dateText = await page.$eval("h3", (el) => {
-      const text = el.textContent || "";
-      return text.includes("年") ? text : null;
-    }).catch(() => null);
-
+    const dateText = await page.textContent("h3:has-text('年')");
     if (!dateText) throw new Error("Could not find date heading");
 
     const dateMatch = dateText.match(/(\d{4}).*?年\s*(\d{1,2})月\s*(\d{1,2})日/);
@@ -178,23 +172,22 @@ async function scrapeFukuoka(page: Page, targetDate: string): Promise<FukuokaRoo
     const diffDays = Math.floor((targetDateObj.getTime() - current.getTime()) / (1000 * 60 * 60 * 24));
 
     if (diffDays > 30) {
-      await clickByText(page, "1ヶ月後");
+      await page.click('text="1ヶ月後"');
     } else if (diffDays > 7) {
-      await clickByText(page, "1週間後");
+      await page.click('text="1週間後"');
     } else if (diffDays > 0) {
-      await clickByText(page, "1日後");
+      await page.click('text="1日後"');
     } else if (diffDays < -30) {
-      await clickByText(page, "1ヶ月前");
+      await page.click('text="1ヶ月前"');
     } else if (diffDays < -7) {
-      await clickByText(page, "1週間前");
+      await page.click('text="1週間前"');
     } else {
-      await clickByText(page, "1日前");
+      await page.click('text="1日前"');
     }
 
-    await waitForNetworkIdle(page);
+    await page.waitForLoadState("networkidle");
   }
 
-  // Extract availability
   return await page.evaluate((args) => {
     const { targetRooms, timeRanges } = args;
     const results: FukuokaRoom[] = [];
@@ -246,29 +239,18 @@ async function scrapeCreaSlot(
 ): Promise<CreaTimeSlot[]> {
   const bookingUrl = `${serviceUrl}/book/event_type`;
   await page.goto(bookingUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await wait(2000);
+  await page.waitForTimeout(2000);
 
   const [year, month, day] = targetDate.split("-");
   const targetYearNum = parseInt(year);
   const targetMonthNum = parseInt(month);
   const targetDayNum = parseInt(day);
 
-  // Navigate to correct month
   let monthAttempts = 0;
   while (monthAttempts < 6) {
-    const monthButtonText = await page.evaluate(() => {
-      const buttons = document.querySelectorAll("button[disabled]");
-      for (const btn of buttons) {
-        const text = btn.textContent || "";
-        if (text.includes("年")) {
-          return text;
-        }
-      }
-      return "";
-    });
-
-    const yearMatch = monthButtonText?.match(/(\d{4})年/);
-    const monthMatch = monthButtonText?.match(/(\d{1,2})月/);
+    const monthText = await page.locator('button[disabled]:has-text("年")').textContent().catch(() => "");
+    const yearMatch = monthText?.match(/(\d{4})年/);
+    const monthMatch = monthText?.match(/(\d{1,2})月/);
 
     if (yearMatch && monthMatch) {
       const currYear = parseInt(yearMatch[1]);
@@ -278,54 +260,27 @@ async function scrapeCreaSlot(
 
       const diff = (targetYearNum - currYear) * 12 + (targetMonthNum - currMonth);
       if (diff > 0) {
-        const clicked = await page.evaluate(() => {
-          const buttons = document.querySelectorAll("button");
-          const imgButtons = Array.from(buttons).filter(btn => btn.querySelector("img"));
-          if (imgButtons.length > 0) {
-            const lastBtn = imgButtons[imgButtons.length - 1] as HTMLButtonElement;
-            if (!lastBtn.disabled) {
-              lastBtn.click();
-              return true;
-            }
-          }
-          return false;
-        });
-        if (!clicked) return [];
-        await wait(800);
+        const nextBtn = page.locator('button').filter({ has: page.locator('img') }).last();
+        if (await nextBtn.isDisabled().catch(() => true)) return [];
+        await nextBtn.click();
+        await page.waitForTimeout(800);
       } else if (diff < 0) {
-        await page.evaluate(() => {
-          const buttons = document.querySelectorAll("button");
-          const imgButtons = Array.from(buttons).filter(btn => btn.querySelector("img"));
-          if (imgButtons.length > 0) {
-            (imgButtons[0] as HTMLButtonElement).click();
-          }
-        });
-        await wait(800);
+        const prevBtn = page.locator('button').filter({ has: page.locator('img') }).first();
+        await prevBtn.click();
+        await page.waitForTimeout(800);
       }
     }
     monthAttempts++;
   }
 
-  // Click date
-  const dateClicked = await page.evaluate((targetDay) => {
-    const buttons = document.querySelectorAll("button");
-    for (const btn of buttons) {
-      const text = btn.textContent?.trim();
-      if (text === String(targetDay) && !btn.disabled) {
-        (btn as HTMLButtonElement).click();
-        return true;
-      }
-    }
-    return false;
-  }, targetDayNum);
-
-  if (!dateClicked) {
+  const dateBtn = page.locator(`button >> text="${targetDayNum}"`).first();
+  if (await dateBtn.count() === 0 || await dateBtn.isDisabled().catch(() => true)) {
     return [];
   }
 
-  await wait(1500);
+  await dateBtn.click();
+  await page.waitForTimeout(1500);
 
-  // Extract time slots
   return await page.evaluate(() => {
     const results: Array<{ time: string; available: boolean }> = [];
     const listItems = document.querySelectorAll('li, [role="listitem"]');
@@ -346,7 +301,7 @@ async function scrapeCreaSlot(
   });
 }
 
-async function scrapeCrea(browser: Browser, targetDate: string, authData: object | null): Promise<CreaStudio[]> {
+async function scrapeCrea(context: BrowserContext, targetDate: string): Promise<CreaStudio[]> {
   const targetDateObj = new Date(targetDate);
   const results: CreaStudio[] = [];
 
@@ -359,26 +314,10 @@ async function scrapeCrea(browser: Browser, targetDate: string, authData: object
       slots: [],
     };
 
-    // Process slots sequentially (to avoid overwhelming the server)
     for (const [slotType, slotInfo] of Object.entries(studio.slots)) {
       if (!isSlotApplicable(slotInfo.days, targetDateObj)) continue;
 
-      const page = await createPage(browser);
-      
-      // Set cookies if auth data available
-      if (authData) {
-        const authDataTyped = authData as { cookies?: Array<{ name: string; value: string; domain: string; path?: string }> };
-        if (authDataTyped.cookies) {
-          const cookies = authDataTyped.cookies.map((cookie) => ({
-            name: cookie.name,
-            value: cookie.value,
-            domain: cookie.domain,
-            path: cookie.path || "/",
-          }));
-          await page.setCookie(...cookies);
-        }
-      }
-
+      const page = await context.newPage();
       try {
         const timeSlots = await scrapeCreaSlot(page, slotInfo.url, targetDate);
         studioResult.slots.push({
@@ -407,12 +346,24 @@ export async function scrapeAllStudios(targetDate: string): Promise<ParallelScra
   const errors: string[] = [];
 
   try {
-    browser = await launchBrowser();
+    browser = await chromium.launch({ headless: true });
 
-    // Execute in parallel (Fukuoka and CREA)
+    const fukuokaContext = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    });
+
+    const creaContext = authData
+      ? await browser.newContext({
+          storageState: authData as { cookies: Array<{ name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: "Strict" | "Lax" | "None" }>; origins: Array<{ origin: string; localStorage: Array<{ name: string; value: string }> }> },
+          viewport: { width: 1280, height: 720 },
+          userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        })
+      : null;
+
     const [fukuokaResult, creaResult] = await Promise.all([
       (async () => {
-        const page = await createPage(browser!);
+        const page = await fukuokaContext.newPage();
         try {
           return await scrapeFukuoka(page, targetDate);
         } catch (e) {
@@ -423,18 +374,21 @@ export async function scrapeAllStudios(targetDate: string): Promise<ParallelScra
         }
       })(),
       (async () => {
-        if (!authData) {
+        if (!creaContext) {
           errors.push("CREA: 認証情報が見つかりません");
           return [];
         }
         try {
-          return await scrapeCrea(browser!, targetDate, authData);
+          return await scrapeCrea(creaContext, targetDate);
         } catch (e) {
           errors.push(`CREA: ${e instanceof Error ? e.message : String(e)}`);
           return [];
         }
       })(),
     ]);
+
+    await fukuokaContext.close();
+    if (creaContext) await creaContext.close();
 
     return {
       fukuoka: fukuokaResult,
