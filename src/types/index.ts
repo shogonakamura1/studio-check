@@ -54,3 +54,37 @@ export interface CivicHallResponse {
   rooms: CivicHallRoomAvailability[];
   error?: string;
 }
+
+// CREA用の型
+export interface CreaTimeSlot {
+  time: string; // "06:00", "07:00", etc.
+  available: boolean;
+}
+
+export interface CreaSlotAvailability {
+  slotType: string; // "morning", "weekdayDay", etc.
+  slotName: string; // "朝活", "平日昼", etc.
+  price: number;
+  hours: string;
+  timeSlots: CreaTimeSlot[];
+}
+
+export interface CreaStudioAvailability {
+  studioId: string;
+  studioName: string;
+  floor: string;
+  size: string;
+  date: string;
+  dayOfWeek: string;
+  slots: CreaSlotAvailability[];
+  error?: string;
+}
+
+export interface CreaResponse {
+  studioId: string;
+  studioName: string;
+  date: string;
+  dayOfWeek: string;
+  studios: CreaStudioAvailability[];
+  error?: string;
+}

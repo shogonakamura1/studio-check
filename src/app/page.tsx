@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import type { AvailabilityResponse, CivicHallResponse } from "@/types";
+import type { AvailabilityResponse, CivicHallResponse, CreaResponse } from "@/types";
 
 // BUZZ系スタジオ情報（スクレイピング対応）
 const BUZZ_STUDIOS = [
@@ -22,17 +22,30 @@ const CIVIC_HALL_STUDIOS = [
   },
 ];
 
-// 外部スタジオ情報（リンクのみ）
-const EXTERNAL_STUDIOS = [
+// CREAスタジオ情報（スクレイピング対応）
+const CREA_STUDIOS = [
   {
     id: "crea",
     name: "レンタルスタジオCREA",
-    location: "博多駅徒歩5分",
-    url: "https://coubic.com/rentalstudiocrea/782437#pageContent",
-    rooms: ["Aスタジオ", "Bスタジオ", "Cスタジオ"],
-    description: "Coubic予約システム",
+    location: "大名エリア（天神駅徒歩5分）",
+    studios: [
+      { name: "CREA大名", floor: "2F", size: "77㎡" },
+      { name: "CREA+", floor: "4F", size: "100㎡" },
+      { name: "CREA大名Ⅱ", floor: "3F", size: "49㎡" },
+      { name: "CREA music", floor: "3F", size: "28.6㎡" },
+    ],
   },
 ];
+
+// 外部スタジオ情報（リンクのみ）- CREAは対応済みなので空
+const EXTERNAL_STUDIOS: Array<{
+  id: string;
+  name: string;
+  location: string;
+  url: string;
+  rooms: string[];
+  description: string;
+}> = [];
 
 // 時間オプション（06:00〜23:30まで30分刻み）
 const TIME_OPTIONS = Array.from({ length: 36 }, (_, i) => {
@@ -73,7 +86,7 @@ function isTimeRangeOverlap(
 interface ApiResponse {
   date: string;
   dayOfWeek: string;
-  studios: (AvailabilityResponse | CivicHallResponse)[];
+  studios: (AvailabilityResponse | CivicHallResponse | CreaResponse)[];
   availableStudios: { id: string; name: string; studioCount: number }[];
 }
 
@@ -105,11 +118,29 @@ export default function Home() {
     return {
       ...data,
       studios: data.studios.map((studio) => {
-        // 市民会館の場合は時間範囲の重なりでフィルタリング
-        if ("rooms" in studio) {
+        // CREAの場合は studios プロパティでフィルタリング
+        if ("studios" in studio && Array.isArray(studio.studios)) {
           return {
             ...studio,
-            rooms: studio.rooms.map((room) => ({
+            studios: studio.studios.map((creaStudio) => ({
+              ...creaStudio,
+              slots: creaStudio.slots.map((slot) => ({
+                ...slot,
+                timeSlots: slot.timeSlots.filter((ts) => {
+                  const slotMinutes = timeToMinutes(ts.time);
+                  return slotMinutes >= startMinutes && slotMinutes < endMinutes;
+                }),
+              })),
+            })),
+          };
+        }
+        
+        // 市民会館の場合は時間範囲の重なりでフィルタリング
+        if ("rooms" in studio) {
+          const civicHallStudio = studio as CivicHallResponse;
+          return {
+            ...civicHallStudio,
+            rooms: civicHallStudio.rooms.map((room) => ({
               ...room,
               slots: room.slots.filter((slot) => {
                 // timeRange "9:00-12:30" を "9:00" と "12:30" に分割
@@ -122,9 +153,10 @@ export default function Home() {
         }
         
         // BUZZスタジオの場合は時間フィルタリング
+        const buzzStudio = studio as AvailabilityResponse;
         return {
-          ...studio,
-          timeSlots: studio.timeSlots.filter((slot) => {
+          ...buzzStudio,
+          timeSlots: buzzStudio.timeSlots.filter((slot) => {
             const slotMinutes = timeToMinutes(slot.time);
             return slotMinutes >= startMinutes && slotMinutes < endMinutes;
           }),
@@ -310,6 +342,71 @@ export default function Home() {
                 </label>
               ))}
             </div>
+          </div>
+
+          {/* CREAスタジオ選択 */}
+          <div className="mb-6">
+            <label className="block text-sm text-muted mb-3">
+              <span className="text-purple-500">●</span> レンタルスタジオCREA（空き状況を表示）
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {CREA_STUDIOS.map((studio) => (
+                <label
+                  key={studio.id}
+                  className={`
+                    flex items-center gap-3 p-4 rounded-lg border cursor-pointer transition-all
+                    ${
+                      selectedStudios.includes(studio.id)
+                        ? "border-purple-500 bg-purple-500/10"
+                        : "border-border bg-card hover:border-muted"
+                    }
+                  `}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedStudios.includes(studio.id)}
+                    onChange={() => toggleStudio(studio.id)}
+                    className="sr-only"
+                  />
+                  <div
+                    className={`
+                      w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
+                      ${
+                        selectedStudios.includes(studio.id)
+                          ? "border-purple-500 bg-purple-500"
+                          : "border-muted"
+                      }
+                    `}
+                  >
+                    {selectedStudios.includes(studio.id) && (
+                      <svg
+                        className="w-3 h-3 text-background"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={3}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm">{studio.name}</div>
+                    <div className="text-xs text-muted">{studio.location}</div>
+                    <div className="text-xs text-purple-500/70 mt-0.5">
+                      {studio.studios.map(s => s.name).join(", ")}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted mt-2">
+              ※ CREAは取得に時間がかかる場合があります（約30秒）
+            </p>
           </div>
 
           {/* 外部スタジオリンク */}
@@ -525,8 +622,9 @@ export default function Home() {
 
             {/* 各スタジオの結果 */}
             {filteredData.studios.map((studio, studioIndex) => {
-              // 型ガード: CivicHallResponse かどうかを判定
+              // 型ガード
               const isCivicHall = "rooms" in studio;
+              const isCrea = "studios" in studio && Array.isArray((studio as CreaResponse).studios);
 
               return (
                 <div
@@ -547,12 +645,73 @@ export default function Home() {
                     )}
                   </div>
 
-                  {/* 市民会館系の表示 */}
-                  {isCivicHall ? (
+                  {/* CREAスタジオ系の表示 */}
+                  {isCrea ? (
                     <div className="p-6">
-                      {studio.rooms && studio.rooms.length > 0 ? (
+                      {(studio as CreaResponse).studios && (studio as CreaResponse).studios.length > 0 ? (
                         <div className="space-y-6">
-                          {studio.rooms.map((room) => (
+                          {(studio as CreaResponse).studios.map((creaStudio) => (
+                            <div key={creaStudio.studioId} className="border border-border rounded-lg overflow-hidden">
+                              <div className="bg-purple-500/10 px-4 py-3 border-b border-border">
+                                <h4 className="font-semibold text-sm text-purple-400">
+                                  {creaStudio.studioName}
+                                  <span className="text-muted font-normal ml-2">
+                                    {creaStudio.floor} / {creaStudio.size}
+                                  </span>
+                                </h4>
+                              </div>
+                              <div className="p-4 space-y-4">
+                                {creaStudio.slots.map((slot) => {
+                                  const availableSlots = slot.timeSlots.filter(ts => ts.available);
+                                  if (availableSlots.length === 0) return null;
+                                  
+                                  return (
+                                    <div key={slot.slotType} className="bg-card-hover rounded-lg p-3">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className="text-sm font-medium">
+                                          {slot.slotName}
+                                          <span className="text-muted font-normal ml-2 text-xs">
+                                            ({slot.hours})
+                                          </span>
+                                        </span>
+                                        <span className="text-purple-400 text-sm font-mono">
+                                          ¥{slot.price.toLocaleString()}
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {availableSlots.map((ts) => (
+                                          <div
+                                            key={ts.time}
+                                            className="px-3 py-1.5 rounded-md bg-accent/20 border border-accent/40 text-xs font-mono"
+                                          >
+                                            {ts.time}〜
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                {creaStudio.slots.every(s => s.timeSlots.filter(ts => ts.available).length === 0) && (
+                                  <div className="text-center text-muted text-sm py-4">
+                                    指定した時間帯に空きがありません
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-8 text-center text-muted">
+                          データがありません
+                        </div>
+                      )}
+                    </div>
+                  ) : isCivicHall ? (
+                    /* 市民会館系の表示 */
+                    <div className="p-6">
+                      {(studio as CivicHallResponse).rooms && (studio as CivicHallResponse).rooms.length > 0 ? (
+                        <div className="space-y-6">
+                          {(studio as CivicHallResponse).rooms.map((room) => (
                             <div key={room.roomName} className="border border-border rounded-lg overflow-hidden">
                               <div className="bg-card-hover px-4 py-2 border-b border-border">
                                 <h4 className="font-semibold text-sm">{room.roomName}</h4>
@@ -633,7 +792,7 @@ export default function Home() {
                   ) : (
                     /* BUZZスタジオ系の表示 */
                     <>
-                      {studio.timeSlots && studio.timeSlots.length > 0 ? (
+                      {(studio as AvailabilityResponse).timeSlots && (studio as AvailabilityResponse).timeSlots.length > 0 ? (
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead>
@@ -641,7 +800,7 @@ export default function Home() {
                                 <th className="px-4 py-3 text-left text-muted font-medium sticky left-0 bg-card">
                                   時間
                                 </th>
-                                {studio.timeSlots[0]?.studios.map((_, idx) => (
+                                {(studio as AvailabilityResponse).timeSlots[0]?.studios.map((_, idx) => (
                                   <th
                                     key={idx}
                                     className="px-2 py-3 text-center text-muted font-medium min-w-[50px]"
@@ -652,7 +811,7 @@ export default function Home() {
                               </tr>
                             </thead>
                             <tbody>
-                              {studio.timeSlots.map((slot) => (
+                              {(studio as AvailabilityResponse).timeSlots.map((slot) => (
                                 <tr
                                   key={slot.time}
                                   className="border-b border-border/50 hover:bg-card-hover transition-colors"

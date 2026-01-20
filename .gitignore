@@ -33,6 +33,13 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# auth session files (contains sensitive login information)
+auth-*.json
+
+# debug screenshots
+login-page-*.png
+debug-*.png
+
 # vercel
 .vercel
 

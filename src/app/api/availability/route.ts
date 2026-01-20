@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
-import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse } from "@/types";
+import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse, CreaResponse } from "@/types";
 import { scrapeFukuokaCivicHall } from "@/lib/scrapers/fukuoka-civic-hall";
+import { scrapeCrea, CREA_STUDIOS } from "@/lib/scrapers/crea";
 
 // スタジオ情報のマスターデータ
 const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number; type?: string }> = {
@@ -35,6 +36,13 @@ const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: numb
     url: "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php",
     studioCount: 3, // リハーサル室、練習室①、練習室③
     type: "civic-hall",
+  },
+  // CREAスタジオ
+  crea: {
+    name: "レンタルスタジオCREA",
+    url: "https://coubic.com/rentalstudiocrea",
+    studioCount: 4, // CREA大名、CREA+、CREA大名Ⅱ、CREA music
+    type: "crea",
   },
 };
 
@@ -166,11 +174,41 @@ async function scrapeCivicHallAvailability(
   }
 }
 
+// CREA用スクレイピング関数
+async function scrapeCreaAvailability(
+  studioId: string,
+  date: string
+): Promise<CreaResponse> {
+  const studioInfo = STUDIO_DATA[studioId];
+
+  try {
+    const studios = await scrapeCrea(date);
+
+    return {
+      studioId,
+      studioName: studioInfo.name,
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      studios,
+    };
+  } catch (error) {
+    console.error(`Error scraping ${studioId}:`, error);
+    return {
+      studioId,
+      studioName: studioInfo.name,
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      studios: [],
+      error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
+    };
+  }
+}
+
 // スクレイピング関数（タイプに応じて分岐）
 async function scrapeAvailability(
   studioId: string,
   date: string
-): Promise<AvailabilityResponse | CivicHallResponse> {
+): Promise<AvailabilityResponse | CivicHallResponse | CreaResponse> {
   const studioInfo = STUDIO_DATA[studioId];
 
   if (!studioInfo) {
@@ -186,6 +224,10 @@ async function scrapeAvailability(
 
   if (studioInfo.type === "civic-hall") {
     return scrapeCivicHallAvailability(studioId, date);
+  }
+
+  if (studioInfo.type === "crea") {
+    return scrapeCreaAvailability(studioId, date);
   }
 
   return scrapeBuzzAvailability(studioId, date);
