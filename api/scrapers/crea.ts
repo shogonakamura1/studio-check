@@ -173,6 +173,57 @@ function formatDate(unixTimestamp: number): string {
 }
 
 /**
+ * スロット名から時間範囲内のすべての時間スロットを生成（1時間刻み）
+ * デフォルトでavailable: falseにしておく
+ */
+function generateAllTimeSlots(slotName: string): CreaTimeSlot[] {
+  const slots: CreaTimeSlot[] = [];
+  
+  // 各スロットタイプの時間範囲
+  let startHour = 6;
+  let endHour = 23;
+  
+  switch (slotName) {
+    case "朝活":
+      startHour = 6;
+      endHour = 8; // 6:00, 7:00, 8:00
+      break;
+    case "平日昼":
+      startHour = 9;
+      endHour = 16; // 9:00-16:00
+      break;
+    case "平日夜":
+      startHour = 17;
+      endHour = 22; // 17:00-22:00
+      break;
+    case "平日夜・土日":
+      // 平日夜の場合は17:00-22:00、土日の場合は9:00-22:00
+      // ここでは最大範囲を生成（9:00-22:00）
+      startHour = 9;
+      endHour = 22;
+      break;
+    case "土日":
+      startHour = 6;
+      endHour = 22; // 6:00-22:00
+      break;
+    default:
+      // デフォルト
+      startHour = 6;
+      endHour = 22;
+  }
+  
+  // 時間スロットを生成
+  for (let hour = startHour; hour <= endHour; hour++) {
+    slots.push({
+      time: `${hour.toString().padStart(2, "0")}:00`,
+      available: false, // デフォルトは予約済み
+    });
+  }
+  
+  return slots;
+}
+
+/**
  * CREAの空き状況をAPIから取得
  */
 export async function scrapeCrea(
@@ -228,6 +279,26 @@ export async function scrapeCrea(
     // イベントをスロットタイプごとにグループ化
     const slotGroups = new Map<string, { slotName: string; price: number; hours: string; times: CreaTimeSlot[] }>();
     
+    // まず、すべてのpublic_idについて初期化（available: falseで全時間帯を生成）
+    for (const event of data.data) {
+      const studioId = PUBLIC_ID_TO_STUDIO[event.public_id];
+      if (!studioId || !targetStudios.includes(studioId)) continue;
+      
+      const { slotName, price } = parseSlotTitle(event.title);
+      const slotKey = `${studioId}:${event.public_id}`;
+      
+      if (!slotGroups.has(slotKey)) {
+        // すべての時間スロットを生成（デフォルトで available: false）
+        slotGroups.set(slotKey, {
+          slotName,
+          price,
+          hours: getHoursFromSlotName(slotName),
+          times: generateAllTimeSlots(slotName),
+        });
+      }
+    }
+    
+    // 次に、APIから取得した空き時間のみavailable: trueに更新
     for (const event of data.data) {
       const studioId = PUBLIC_ID_TO_STUDIO[event.public_id];
       if (!studioId || !targetStudios.includes(studioId)) continue;
@@ -236,28 +307,26 @@ export async function scrapeCrea(
       const eventDate = formatDate(event.start);
       if (eventDate !== targetDate) continue;
       
-      const { slotName, price } = parseSlotTitle(event.title);
       const slotKey = `${studioId}:${event.public_id}`;
+      const group = slotGroups.get(slotKey);
+      if (!group) continue;
       
-      if (!slotGroups.has(slotKey)) {
-        slotGroups.set(slotKey, {
-          slotName,
-          price,
-          hours: getHoursFromSlotName(slotName),
-          times: [],
-        });
-      }
-      
-      const group = slotGroups.get(slotKey)!;
       const time = formatTime(event.start);
       
       // 予約可能かどうか
       const available = event.reservable && !event.full;
       
-      group.times.push({
-        time,
-        available,
-      });
+      // 既存の時間スロットを更新
+      const existingSlot = group.times.find(ts => ts.time === time);
+      if (existingSlot) {
+        existingSlot.available = available;
+      } else {
+        // 範囲外の時間の場合は追加
+        group.times.push({
+          time,
+          available,
+        });
+      }
     }
     
     // スロットグループをスタジオ結果に追加

@@ -7,9 +7,7 @@ import type { AvailabilityResponse, CivicHallResponse, CreaResponse } from "@/ty
 const BUZZ_STUDIOS = [
   { id: "fukuokahonten", name: "BUZZ福岡本店", location: "天神南駅徒歩3分" },
   { id: "fukuokatenjin", name: "BUZZ福岡天神", location: "天神駅徒歩5分" },
-  { id: "fukuokatenjin2nd", name: "BUZZ福岡天神2nd", location: "天神駅徒歩5分" },
   { id: "fukuokahakata", name: "BUZZ福岡博多", location: "中洲川端駅徒歩3分" },
-  { id: "fukuokahakataekimae", name: "BUZZ福岡博多駅前", location: "博多駅徒歩2分" },
 ];
 
 // 市民会館・ホール系（部屋単位で選択可能）

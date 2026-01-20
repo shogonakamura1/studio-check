@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse, CreaResponse } from "@/types";
 import { scrapeFukuokaCivicHall, type RoomAvailability } from "../../../../api/scrapers/fukuoka-civic-hall";
-import { scrapeCrea, type CreaStudioAvailability, CREA_STUDIOS } from "../../../../api/scrapers/crea";
+import { scrapeCrea, type CreaStudioAvailability } from "../../../../api/scrapers/crea";
 
 // スタジオ情報のマスターデータ
 const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number; type?: string }> = {
@@ -25,19 +25,9 @@ const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: numb
     url: "https://buzz-st.com/fukuokatenjin",
     studioCount: 6,
   },
-  fukuokatenjin2nd: {
-    name: "BUZZ福岡天神2nd",
-    url: "https://buzz-st.com/fukuokatenjin2nd",
-    studioCount: 4,
-  },
   fukuokahakata: {
     name: "BUZZ福岡博多",
     url: "https://buzz-st.com/fukuokahakata",
-    studioCount: 6,
-  },
-  fukuokahakataekimae: {
-    name: "BUZZ福岡博多駅前",
-    url: "https://buzz-st.com/fukuokahakataekimae",
     studioCount: 6,
   },
   // 市民会館（部屋単位）
