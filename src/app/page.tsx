@@ -393,68 +393,6 @@ export default function Home() {
                 </label>
               ))}
             </div>
-            <p className="text-xs text-muted mt-2">
-              ※ CREAは1スタジオあたり約10秒かかります
-            </p>
-          </div>
-
-          {/* 外部スタジオリンク */}
-          <div className="mb-6">
-            <label className="block text-sm text-muted mb-3">
-              <span className="text-yellow-500">●</span> 外部サイト（リンクを開く）
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {EXTERNAL_STUDIOS.map((studio) => (
-                <a
-                  key={studio.id}
-                  href={studio.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-start gap-3 p-4 rounded-lg border border-border bg-card hover:border-yellow-500/50 hover:bg-yellow-500/5 transition-all group"
-                >
-                  <div className="w-5 h-5 rounded border-2 border-yellow-500/50 flex items-center justify-center mt-0.5">
-                    <svg
-                      className="w-3 h-3 text-yellow-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                      />
-                    </svg>
-                  </div>
-                  <div className="flex-1">
-                    <div className="font-medium text-sm flex items-center gap-2">
-                      {studio.name}
-                      <svg
-                        className="w-3 h-3 text-muted"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                        />
-                      </svg>
-                    </div>
-                    <div className="text-xs text-muted">{studio.location}</div>
-                    <div className="text-xs text-muted mt-1">
-                      対象: {studio.rooms.join(", ")}
-                    </div>
-                  </div>
-                </a>
-              ))}
-            </div>
-            <p className="text-xs text-muted mt-2">
-              ※ 外部サイトは直接リンクを開いて確認してください（自動取得非対応）
-            </p>
           </div>
 
           {/* 日付クイック選択 */}
