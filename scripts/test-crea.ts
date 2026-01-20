@@ -1,4 +1,4 @@
-import { scrapeCrea, CREA_STUDIOS } from "../src/lib/scrapers/crea";
+import { scrapeCrea, CREA_STUDIOS } from "../api/scrapers/crea";
 
 async function main() {
   // 1週間後の日付をテスト

@@ -1,3 +1,3 @@
-import { testParallelScraper } from "../src/lib/scrapers/parallel-scraper";
+import { testParallelScraper } from "../api/scrapers/parallel-scraper";
 
 testParallelScraper();

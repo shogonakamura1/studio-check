@@ -1,12 +1,12 @@
 # Playwright公式イメージをベースに使用（依存関係がすべて含まれている）
-FROM mcr.microsoft.com/playwright:v1.49.1-noble
+FROM mcr.microsoft.com/playwright:v1.57.0-noble
 
 WORKDIR /app
 
 # package.jsonとpackage-lock.jsonをコピー
 COPY package*.json ./
 
-# 依存関係をインストール
+# 依存関係をインストール（devDependencies含む、playwrightのため）
 RUN npm ci
 
 # ソースコードをコピー

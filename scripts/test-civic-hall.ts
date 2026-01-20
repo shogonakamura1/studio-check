@@ -1,4 +1,4 @@
-import { scrapeFukuokaCivicHall } from "../src/lib/scrapers/fukuoka-civic-hall";
+import { scrapeFukuokaCivicHall } from "../api/scrapers/fukuoka-civic-hall";
 
 async function main() {
   // 30日後の日付をテスト

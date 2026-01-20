@@ -7,8 +7,8 @@
  */
 
 import http from "http";
-import { scrapeFukuokaCivicHall, type RoomAvailability } from "../src/lib/scrapers/fukuoka-civic-hall";
-import { scrapeCrea, type CreaStudioAvailability } from "../src/lib/scrapers/crea";
+import { scrapeFukuokaCivicHall, type RoomAvailability } from "./scrapers/fukuoka-civic-hall";
+import { scrapeCrea, type CreaStudioAvailability } from "./scrapers/crea";
 
 const PORT = process.env.PORT || 3001;
 
