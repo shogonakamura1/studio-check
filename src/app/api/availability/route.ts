@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
-import type { AvailabilityResponse, TimeSlot, StudioAvailability } from "@/types";
+import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse } from "@/types";
+import { scrapeFukuokaCivicHall } from "@/lib/scrapers/fukuoka-civic-hall";
 
 // スタジオ情報のマスターデータ
-const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number }> = {
+const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number; type?: string }> = {
   fukuokahonten: {
     name: "BUZZ福岡本店",
     url: "https://buzz-st.com/fukuokahonten",
@@ -29,6 +30,12 @@ const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: numb
     url: "https://buzz-st.com/fukuokahakataekimae",
     studioCount: 6,
   },
+  fukuokacivichall: {
+    name: "福岡市民会館",
+    url: "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php",
+    studioCount: 3, // リハーサル室、練習室①、練習室③
+    type: "civic-hall",
+  },
 };
 
 // 曜日を取得するヘルパー関数
@@ -38,8 +45,8 @@ function getDayOfWeek(dateStr: string): string {
   return days[date.getDay()];
 }
 
-// スクレイピング関数
-async function scrapeAvailability(
+// BUZZスタジオ用スクレイピング関数
+async function scrapeBuzzAvailability(
   studioId: string,
   date: string
 ): Promise<AvailabilityResponse> {
@@ -127,6 +134,61 @@ async function scrapeAvailability(
       error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
     };
   }
+}
+
+// 福岡市民会館用スクレイピング関数
+async function scrapeCivicHallAvailability(
+  studioId: string,
+  date: string
+): Promise<CivicHallResponse> {
+  const studioInfo = STUDIO_DATA[studioId];
+
+  try {
+    const rooms = await scrapeFukuokaCivicHall(date);
+
+    return {
+      studioId,
+      studioName: studioInfo.name,
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      rooms,
+    };
+  } catch (error) {
+    console.error(`Error scraping ${studioId}:`, error);
+    return {
+      studioId,
+      studioName: studioInfo.name,
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      rooms: [],
+      error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
+    };
+  }
+}
+
+// スクレイピング関数（タイプに応じて分岐）
+async function scrapeAvailability(
+  studioId: string,
+  date: string
+): Promise<AvailabilityResponse | CivicHallResponse> {
+  const studioInfo = STUDIO_DATA[studioId];
+
+  if (!studioInfo) {
+    return {
+      studioId,
+      studioName: "不明",
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      timeSlots: [],
+      error: "スタジオが見つかりません",
+    };
+  }
+
+  if (studioInfo.type === "civic-hall") {
+    return scrapeCivicHallAvailability(studioId, date);
+  }
+
+  return scrapeBuzzAvailability(studioId, date);
 }
 
 // GET /api/availability?studios=fukuokahonten,fukuokatenjin&date=2026-01-20

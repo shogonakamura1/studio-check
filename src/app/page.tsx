@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import type { AvailabilityResponse } from "@/types";
+import type { AvailabilityResponse, CivicHallResponse } from "@/types";
 
 // BUZZ系スタジオ情報（スクレイピング対応）
 const BUZZ_STUDIOS = [
@@ -12,16 +12,18 @@ const BUZZ_STUDIOS = [
   { id: "fukuokahakataekimae", name: "BUZZ福岡博多駅前", location: "博多駅徒歩2分" },
 ];
 
+// 市民会館・ホール系スタジオ情報（スクレイピング対応）
+const CIVIC_HALL_STUDIOS = [
+  {
+    id: "fukuokacivichall",
+    name: "福岡市民会館",
+    location: "天神駅徒歩10分",
+    rooms: ["リハーサル室", "練習室①", "練習室③"],
+  },
+];
+
 // 外部スタジオ情報（リンクのみ）
 const EXTERNAL_STUDIOS = [
-  {
-    id: "fukuoka-kyotenbunka",
-    name: "福岡市民ホール",
-    location: "天神駅徒歩10分",
-    url: "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php",
-    rooms: ["リハーサル室", "練習室1", "練習室3"],
-    description: "福岡市民ホール予約システム",
-  },
   {
     id: "crea",
     name: "レンタルスタジオCREA",
@@ -51,11 +53,27 @@ function timeToMinutes(time: string): number {
   return hours * 60 + minutes;
 }
 
+// 時間範囲が重なるかチェック
+function isTimeRangeOverlap(
+  range1Start: string,
+  range1End: string,
+  range2Start: string,
+  range2End: string
+): boolean {
+  const r1Start = timeToMinutes(range1Start);
+  const r1End = timeToMinutes(range1End);
+  const r2Start = timeToMinutes(range2Start);
+  const r2End = timeToMinutes(range2End);
+
+  // 重なりの判定: range1の終わりがrange2の始まりより後 かつ range1の始まりがrange2の終わりより前
+  return r1End > r2Start && r1Start < r2End;
+}
+
 // APIレスポンスの型
 interface ApiResponse {
   date: string;
   dayOfWeek: string;
-  studios: AvailabilityResponse[];
+  studios: (AvailabilityResponse | CivicHallResponse)[];
   availableStudios: { id: string; name: string; studioCount: number }[];
 }
 
@@ -86,13 +104,32 @@ export default function Home() {
 
     return {
       ...data,
-      studios: data.studios.map((studio) => ({
-        ...studio,
-        timeSlots: studio.timeSlots.filter((slot) => {
-          const slotMinutes = timeToMinutes(slot.time);
-          return slotMinutes >= startMinutes && slotMinutes < endMinutes;
-        }),
-      })),
+      studios: data.studios.map((studio) => {
+        // 市民会館の場合は時間範囲の重なりでフィルタリング
+        if ("rooms" in studio) {
+          return {
+            ...studio,
+            rooms: studio.rooms.map((room) => ({
+              ...room,
+              slots: room.slots.filter((slot) => {
+                // timeRange "9:00-12:30" を "9:00" と "12:30" に分割
+                const [slotStart, slotEnd] = slot.timeRange.split("-");
+                // 指定時間範囲と重なりをチェック
+                return isTimeRangeOverlap(startTime, endTime, slotStart, slotEnd);
+              }),
+            })),
+          };
+        }
+        
+        // BUZZスタジオの場合は時間フィルタリング
+        return {
+          ...studio,
+          timeSlots: studio.timeSlots.filter((slot) => {
+            const slotMinutes = timeToMinutes(slot.time);
+            return slotMinutes >= startMinutes && slotMinutes < endMinutes;
+          }),
+        };
+      }),
     };
   }, [data, startTime, endTime]);
 
@@ -213,6 +250,68 @@ export default function Home() {
             </div>
           </div>
 
+          {/* 市民会館・ホール系スタジオ選択 */}
+          <div className="mb-6">
+            <label className="block text-sm text-muted mb-3">
+              <span className="text-blue-500">●</span> 市民会館・ホール系（空き状況を表示）
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {CIVIC_HALL_STUDIOS.map((studio) => (
+                <label
+                  key={studio.id}
+                  className={`
+                    flex items-center gap-3 p-4 rounded-lg border cursor-pointer transition-all
+                    ${
+                      selectedStudios.includes(studio.id)
+                        ? "border-blue-500 bg-blue-500/10"
+                        : "border-border bg-card hover:border-muted"
+                    }
+                  `}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedStudios.includes(studio.id)}
+                    onChange={() => toggleStudio(studio.id)}
+                    className="sr-only"
+                  />
+                  <div
+                    className={`
+                      w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
+                      ${
+                        selectedStudios.includes(studio.id)
+                          ? "border-blue-500 bg-blue-500"
+                          : "border-muted"
+                      }
+                    `}
+                  >
+                    {selectedStudios.includes(studio.id) && (
+                      <svg
+                        className="w-3 h-3 text-background"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={3}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm">{studio.name}</div>
+                    <div className="text-xs text-muted">{studio.location}</div>
+                    <div className="text-xs text-blue-500/70 mt-0.5">
+                      {studio.rooms.join(", ")}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
           {/* 外部スタジオリンク */}
           <div className="mb-6">
             <label className="block text-sm text-muted mb-3">
@@ -268,7 +367,7 @@ export default function Home() {
               ))}
             </div>
             <p className="text-xs text-muted mt-2">
-              ※ 外部サイトは直接リンクを開いて空き状況を確認してください
+              ※ 外部サイトは直接リンクを開いて確認してください（自動取得非対応）
             </p>
           </div>
 
@@ -386,7 +485,7 @@ export default function Home() {
                     検索中...
                   </span>
                 ) : (
-                  "BUZZスタジオを検索"
+                  "検索"
                 )}
               </button>
             </div>
@@ -425,86 +524,178 @@ export default function Home() {
             </div>
 
             {/* 各スタジオの結果 */}
-            {filteredData.studios.map((studio, studioIndex) => (
-              <div
-                key={studio.studioId}
-                className="bg-card border border-border rounded-lg overflow-hidden animate-fade-in"
-                style={{ animationDelay: `${studioIndex * 100}ms` }}
-              >
-                {/* スタジオヘッダー */}
-                <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-lg">{studio.studioName}</h3>
-                    <p className="text-sm text-muted">
-                      {studio.date}（{studio.dayOfWeek}）
-                    </p>
+            {filteredData.studios.map((studio, studioIndex) => {
+              // 型ガード: CivicHallResponse かどうかを判定
+              const isCivicHall = "rooms" in studio;
+
+              return (
+                <div
+                  key={studio.studioId}
+                  className="bg-card border border-border rounded-lg overflow-hidden animate-fade-in"
+                  style={{ animationDelay: `${studioIndex * 100}ms` }}
+                >
+                  {/* スタジオヘッダー */}
+                  <div className="border-b border-border px-6 py-4 flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-lg">{studio.studioName}</h3>
+                      <p className="text-sm text-muted">
+                        {studio.date}（{studio.dayOfWeek}）
+                      </p>
+                    </div>
+                    {studio.error && (
+                      <span className="text-danger text-sm">{studio.error}</span>
+                    )}
                   </div>
-                  {studio.error && (
-                    <span className="text-danger text-sm">{studio.error}</span>
+
+                  {/* 市民会館系の表示 */}
+                  {isCivicHall ? (
+                    <div className="p-6">
+                      {studio.rooms && studio.rooms.length > 0 ? (
+                        <div className="space-y-6">
+                          {studio.rooms.map((room) => (
+                            <div key={room.roomName} className="border border-border rounded-lg overflow-hidden">
+                              <div className="bg-card-hover px-4 py-2 border-b border-border">
+                                <h4 className="font-semibold text-sm">{room.roomName}</h4>
+                              </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="border-b border-border">
+                                      <th className="px-4 py-3 text-left text-muted font-medium">
+                                        時間帯
+                                      </th>
+                                      <th className="px-4 py-3 text-center text-muted font-medium">
+                                        状況
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {room.slots.map((slot) => (
+                                      <tr
+                                        key={`${slot.slotId}-${slot.timeRange}`}
+                                        className="border-b border-border/50 hover:bg-card-hover transition-colors"
+                                      >
+                                        <td className="px-4 py-3 font-mono text-muted">
+                                          {slot.timeRange}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                          <div
+                                            className={`
+                                              inline-flex items-center justify-center w-12 h-8 rounded-md transition-all
+                                              ${
+                                                slot.status === "○"
+                                                  ? "bg-accent/20 border border-accent/40"
+                                                  : slot.status === "●"
+                                                  ? "bg-accent/20 border border-accent/40"
+                                                  : slot.status === "×"
+                                                  ? "bg-danger/20 border border-danger/40"
+                                                  : "bg-muted/10 border border-muted/20"
+                                              }
+                                            `}
+                                            title={
+                                              slot.status === "○" || slot.status === "●"
+                                                ? "空き"
+                                                : slot.status === "×"
+                                                ? "予約済み"
+                                                : "受付期間外"
+                                            }
+                                          >
+                                            <span
+                                              className={`
+                                                text-sm
+                                                ${
+                                                  slot.status === "○" || slot.status === "●"
+                                                    ? "text-accent"
+                                                    : slot.status === "×"
+                                                    ? "text-danger/60"
+                                                    : "text-muted"
+                                                }
+                                              `}
+                                            >
+                                              {slot.status}
+                                            </span>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-8 text-center text-muted">
+                          データがありません
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* BUZZスタジオ系の表示 */
+                    <>
+                      {studio.timeSlots && studio.timeSlots.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-border">
+                                <th className="px-4 py-3 text-left text-muted font-medium sticky left-0 bg-card">
+                                  時間
+                                </th>
+                                {studio.timeSlots[0]?.studios.map((_, idx) => (
+                                  <th
+                                    key={idx}
+                                    className="px-2 py-3 text-center text-muted font-medium min-w-[50px]"
+                                  >
+                                    {idx + 1}st
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {studio.timeSlots.map((slot) => (
+                                <tr
+                                  key={slot.time}
+                                  className="border-b border-border/50 hover:bg-card-hover transition-colors"
+                                >
+                                  <td className="px-4 py-2 font-mono text-muted sticky left-0 bg-card">
+                                    {slot.time}
+                                  </td>
+                                  {slot.studios.map((s, idx) => (
+                                    <td key={idx} className="px-2 py-2 text-center">
+                                      <div
+                                        className={`
+                                          w-8 h-8 mx-auto rounded-md flex items-center justify-center transition-all
+                                          ${
+                                            s.isAvailable
+                                              ? "bg-accent/20 border border-accent/40"
+                                              : "bg-danger/20 border border-danger/40"
+                                          }
+                                        `}
+                                        title={s.isAvailable ? "空き" : "予約済み"}
+                                      >
+                                        {s.isAvailable ? (
+                                          <span className="text-accent text-xs">○</span>
+                                        ) : (
+                                          <span className="text-danger/60 text-xs">×</span>
+                                        )}
+                                      </div>
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="p-8 text-center text-muted">
+                          指定した時間帯にデータがありません
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
-
-                {/* 空き状況グリッド */}
-                {studio.timeSlots.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-border">
-                          <th className="px-4 py-3 text-left text-muted font-medium sticky left-0 bg-card">
-                            時間
-                          </th>
-                          {studio.timeSlots[0]?.studios.map((_, idx) => (
-                            <th
-                              key={idx}
-                              className="px-2 py-3 text-center text-muted font-medium min-w-[50px]"
-                            >
-                              {idx + 1}st
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {studio.timeSlots.map((slot) => (
-                          <tr
-                            key={slot.time}
-                            className="border-b border-border/50 hover:bg-card-hover transition-colors"
-                          >
-                            <td className="px-4 py-2 font-mono text-muted sticky left-0 bg-card">
-                              {slot.time}
-                            </td>
-                            {slot.studios.map((s, idx) => (
-                              <td key={idx} className="px-2 py-2 text-center">
-                                <div
-                                  className={`
-                                    w-8 h-8 mx-auto rounded-md flex items-center justify-center transition-all
-                                    ${
-                                      s.isAvailable
-                                        ? "bg-accent/20 border border-accent/40"
-                                        : "bg-danger/20 border border-danger/40"
-                                    }
-                                  `}
-                                  title={s.isAvailable ? "空き" : "予約済み"}
-                                >
-                                  {s.isAvailable ? (
-                                    <span className="text-accent text-xs">○</span>
-                                  ) : (
-                                    <span className="text-danger/60 text-xs">×</span>
-                                  )}
-                                </div>
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="p-8 text-center text-muted">
-                    指定した時間帯にデータがありません
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

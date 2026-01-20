@@ -32,3 +32,25 @@ export interface SearchParams {
   studioIds: string[];
   date: string;
 }
+
+// 福岡市民会館用の型
+export interface CivicHallSlot {
+  status: string; // "○", "×", "●", "-"
+  date: string; // "2026/02/20"
+  slotId: string; // "0", "1", "2", "3"
+  timeRange: string; // "9:00-12:30"
+}
+
+export interface CivicHallRoomAvailability {
+  roomName: string;
+  slots: CivicHallSlot[];
+}
+
+export interface CivicHallResponse {
+  studioId: string;
+  studioName: string;
+  date: string;
+  dayOfWeek: string;
+  rooms: CivicHallRoomAvailability[];
+  error?: string;
+}
