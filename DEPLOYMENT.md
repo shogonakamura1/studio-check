@@ -66,6 +66,63 @@ git push origin main
 CREA_AUTH_STATE='{"cookies":[{"name":"_session","value":"xxx","domain":"coubic.com",...}],"origins":[...]}'
 ```
 
+## Vercel でのPlaywright実行に関する注意
+
+⚠️ **重要**: Playwrightは重い処理のため、Vercelでの実行には制限があります：
+
+### タイムアウトとプラン
+
+| プラン | 関数タイムアウト | 推奨 |
+|--------|-----------------|------|
+| Hobby | 10秒 | ❌ 不十分（スクレイピングが間に合わない） |
+| Pro | 60秒 | ✅ 推奨（複数サイトの並列実行に対応） |
+
+### 対処方法
+
+#### オプション1: Vercel Proプランを使用（推奨）
+
+```bash
+# Proプランにアップグレード
+vercel --prod
+```
+
+`vercel.json`で既に60秒のタイムアウトを設定済みです。
+
+#### オプション2: 軽量化
+
+CREAのみ取得する場合は、`vercel.json`で調整：
+
+```json
+{
+  "functions": {
+    "app/api/availability/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}
+```
+
+#### オプション3: 結果をキャッシュ
+
+Vercel Cronで定期的にスクレイピングし、結果をデータベースやKVストアに保存：
+
+```typescript
+// app/api/cron/scrape/route.ts
+export async function GET(request: Request) {
+  const results = await scrapeAllStudios(today);
+  // KVストアに保存
+  await kv.set('availability', results);
+  return Response.json({ ok: true });
+}
+```
+
+#### オプション4: 別のホスティングサービス
+
+Playwrightが長時間実行できるサービス：
+- **Render.com**: タイムアウト制限なし
+- **Railway.app**: タイムアウト制限なし
+- **Fly.io**: 長時間実行可能
+
 ## セキュリティ注意事項
 
 ⚠️ **重要**: `auth-crea.json`にはログイン情報が含まれるため:

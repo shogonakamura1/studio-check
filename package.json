@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "postinstall": "playwright install chromium",
     "auth:crea": "tsx scripts/save-crea-auth.ts",
     "auth:export": "bash scripts/export-auth-env.sh",
     "test:civic-hall": "tsx scripts/test-civic-hall.ts",

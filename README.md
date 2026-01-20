@@ -104,17 +104,66 @@ curl "http://localhost:3000/api/availability?studios=fukuokahonten,crea&date=202
 
 本番環境へのデプロイ方法は [DEPLOYMENT.md](./DEPLOYMENT.md) を参照してください。
 
+### 前提条件
+
+1. **環境変数の設定**: `CREA_AUTH_STATE`を設定（[手順](#2-crea認証情報の設定)参照）
+2. **Playwrightの要件**:
+   - Vercel: **Proプラン推奨**（Hobbyプランは10秒制限で不十分）
+   - 他のサービス: タイムアウト60秒以上を推奨
+
 ### Vercel
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/studio-check)
 
-**重要**: デプロイ前に環境変数`CREA_AUTH_STATE`を設定してください。
+**デプロイ手順**:
 
-### Netlify
+```bash
+# 1. Gitにプッシュ
+git add .
+git commit -m "Add studio check app"
+git push origin main
 
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/yourusername/studio-check)
+# 2. Vercel CLIでデプロイ
+npm i -g vercel
+vercel --prod
 
-**重要**: デプロイ前に環境変数`CREA_AUTH_STATE`を設定してください。
+# 3. 環境変数を設定
+npm run auth:export  # JSON文字列をコピー
+# Vercel Dashboard → Settings → Environment Variables
+# CREA_AUTH_STATE に貼り付け（Production環境を選択）
+
+# 4. 再デプロイ
+vercel --prod
+```
+
+**注意**: Vercel Hobbyプランでは10秒のタイムアウト制限があるため、CREAのスクレイピングが失敗する可能性があります。**Proプラン（60秒）を推奨**します。
+
+### 代替デプロイ先（Playwright長時間実行可能）
+
+Vercel Hobbyプランの制限を回避したい場合：
+
+#### Render.com（推奨・無料枠あり）
+
+```bash
+# render.yamlを作成済み
+git push origin main
+# Render.comでGitHub連携してデプロイ
+```
+
+#### Railway.app
+
+```bash
+railway login
+railway init
+railway up
+```
+
+#### Fly.io
+
+```bash
+flyctl launch
+flyctl deploy
+```
 
 ## 技術スタック
 

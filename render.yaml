@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: studio-check
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npx playwright install chromium && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CREA_AUTH_STATE
+        sync: false  # Set this manually in Render Dashboard

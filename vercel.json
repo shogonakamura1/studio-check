@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "app/api/availability/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "env": {
+    "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "0"
+  }
+}

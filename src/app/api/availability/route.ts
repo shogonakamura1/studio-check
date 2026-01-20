@@ -233,6 +233,10 @@ async function scrapeAvailability(
   return scrapeBuzzAvailability(studioId, date);
 }
 
+// Vercel Serverless Functionsのタイムアウト設定
+export const maxDuration = 60; // Pro plan: 60s, Hobby: 10s
+export const dynamic = 'force-dynamic';
+
 // GET /api/availability?studios=fukuokahonten,fukuokatenjin&date=2026-01-20
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -255,19 +259,36 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // 並列でスクレイピング
-  const results = await Promise.all(
-    studioIds.map((studioId) => scrapeAvailability(studioId.trim(), date))
-  );
+  // CREAが含まれている場合の警告（Playwright使用で時間がかかる）
+  const hasCrea = studioIds.some(id => id.trim() === 'crea');
+  if (hasCrea && studioIds.length > 2) {
+    console.warn('⚠️ CREAを含む複数スタジオのリクエスト: タイムアウトの可能性あり');
+  }
 
-  return NextResponse.json({
-    date,
-    dayOfWeek: getDayOfWeek(date),
-    studios: results,
-    availableStudios: Object.entries(STUDIO_DATA).map(([id, info]) => ({
-      id,
-      name: info.name,
-      studioCount: info.studioCount,
-    })),
-  });
+  try {
+    // 並列でスクレイピング
+    const results = await Promise.all(
+      studioIds.map((studioId) => scrapeAvailability(studioId.trim(), date))
+    );
+
+    return NextResponse.json({
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      studios: results,
+      availableStudios: Object.entries(STUDIO_DATA).map(([id, info]) => ({
+        id,
+        name: info.name,
+        studioCount: info.studioCount,
+      })),
+    });
+  } catch (error) {
+    console.error('Scraping error:', error);
+    return NextResponse.json(
+      { 
+        error: error instanceof Error ? error.message : 'スクレイピングに失敗しました',
+        hint: 'Vercel Hobbyプランの場合、タイムアウト制限（10秒）により失敗する可能性があります。Proプランをご検討ください。'
+      },
+      { status: 500 }
+    );
+  }
 }
