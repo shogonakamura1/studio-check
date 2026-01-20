@@ -186,16 +186,34 @@ function isSlotApplicable(
 }
 
 /**
- * auth-crea.json が存在するか確認
+ * 認証情報を取得（環境変数またはファイル）
  */
-function checkAuthFile(): string {
-  const authPath = path.join(process.cwd(), "auth-crea.json");
-  if (!fs.existsSync(authPath)) {
-    throw new Error(
-      "auth-crea.json が見つかりません。先に npm run auth:crea を実行してログインセッションを保存してください。"
-    );
+function getAuthState(): any {
+  // Try environment variable first (for production)
+  const authJson = process.env.CREA_AUTH_STATE;
+  if (authJson) {
+    try {
+      return JSON.parse(authJson);
+    } catch (e) {
+      console.error("Failed to parse CREA_AUTH_STATE:", e);
+      throw new Error("CREA_AUTH_STATE環境変数のパースに失敗しました");
+    }
   }
-  return authPath;
+
+  // Fallback to file (for local development)
+  const authPath = path.join(process.cwd(), "auth-crea.json");
+  if (fs.existsSync(authPath)) {
+    try {
+      return authPath;
+    } catch (e) {
+      console.error("Failed to read auth-crea.json:", e);
+      throw new Error("auth-crea.jsonの読み込みに失敗しました");
+    }
+  }
+
+  throw new Error(
+    "認証情報が見つかりません。環境変数CREA_AUTH_STATEを設定するか、npm run auth:creaを実行してauth-crea.jsonを作成してください。"
+  );
 }
 
 /**
@@ -382,7 +400,7 @@ export async function scrapeCrea(
   targetDate: string, // "2026-01-20" format
   studioIds?: string[] // 省略時は全スタジオ
 ): Promise<CreaStudioAvailability[]> {
-  const authPath = checkAuthFile();
+  const authState = getAuthState();
   let browser: Browser | null = null;
 
   try {
@@ -390,7 +408,7 @@ export async function scrapeCrea(
     
     // 保存済みセッションを使用
     const context = await browser.newContext({
-      storageState: authPath,
+      storageState: authState,
       viewport: { width: 1280, height: 720 },
       userAgent:
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

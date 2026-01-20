@@ -1,8 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# STUDIO_CHECK - スタジオ空き状況チェッカー
 
-## Getting Started
+福岡エリアのレンタルスタジオの空き状況を一括で確認できるWebアプリケーション。
 
-First, run the development server:
+## 対応スタジオ
+
+- **BUZZ系スタジオ**: 福岡本店、天神、天神2nd、博多、博多駅前
+- **福岡市民会館**: リハーサル室、練習室①、練習室③
+- **レンタルスタジオCREA**: 大名、CREA+、大名Ⅱ、CREA music
+
+## セットアップ
+
+### 1. 依存関係のインストール
+
+```bash
+npm install
+```
+
+### 2. CREA認証情報の設定
+
+CREAの空き状況を取得するには、Coubicへのログインが必要です。
+
+#### ローカル開発環境
+
+1. `.env.local`ファイルを作成:
+
+```bash
+COUBIC_EMAIL=your-email@example.com
+COUBIC_PASSWORD=your-password
+```
+
+2. 認証情報を保存:
+
+```bash
+npm run auth:crea
+```
+
+これで`auth-crea.json`が生成されます。
+
+#### 本番環境
+
+本番環境では環境変数を使用します。詳細は [DEPLOYMENT.md](./DEPLOYMENT.md) を参照してください。
+
+```bash
+# 環境変数用のJSON文字列を生成
+npm run auth:export
+```
+
+### 3. 開発サーバーの起動
 
 ```bash
 npm run dev
@@ -20,17 +64,85 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## Learn More
+## 利用可能なスクリプト
 
-To learn more about Next.js, take a look at the following resources:
+### 開発
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `npm run dev` - 開発サーバーを起動
+- `npm run build` - 本番用ビルド
+- `npm start` - 本番サーバーを起動
+- `npm run lint` - ESLintでコードチェック
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 認証
 
-## Deploy on Vercel
+- `npm run auth:crea` - CREAログイン情報を保存（`auth-crea.json`生成）
+- `npm run auth:export` - 環境変数用にJSON文字列を出力
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### テスト（スクレイパー単体テスト）
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm run test:civic-hall` - 福岡市民会館スクレイパーをテスト
+- `npm run test:crea` - CREAスクレイパーをテスト
+- `npm run test:parallel` - 並列スクレイパーをテスト（全サイト一括取得）
+
+## APIエンドポイント
+
+### GET `/api/availability`
+
+スタジオの空き状況を取得
+
+**パラメータ:**
+- `studios` (必須): スタジオIDのカンマ区切り（例: `fukuokahonten,crea`）
+- `date` (必須): 日付（`YYYY-MM-DD`形式）
+
+**例:**
+
+```bash
+curl "http://localhost:3000/api/availability?studios=fukuokahonten,crea&date=2026-01-27"
+```
+
+## デプロイ
+
+本番環境へのデプロイ方法は [DEPLOYMENT.md](./DEPLOYMENT.md) を参照してください。
+
+### Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/studio-check)
+
+**重要**: デプロイ前に環境変数`CREA_AUTH_STATE`を設定してください。
+
+### Netlify
+
+[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/yourusername/studio-check)
+
+**重要**: デプロイ前に環境変数`CREA_AUTH_STATE`を設定してください。
+
+## 技術スタック
+
+- **フレームワーク**: Next.js 16 (App Router)
+- **UI**: React 19, TailwindCSS
+- **スクレイピング**: Playwright, Cheerio
+- **言語**: TypeScript
+- **デプロイ**: Vercel / Netlify 対応
+
+## トラブルシューティング
+
+### CREAの空き状況が取得できない
+
+1. `auth-crea.json`が存在するか確認
+2. セッションが期限切れの場合は`npm run auth:crea`を再実行
+3. 本番環境の場合は環境変数`CREA_AUTH_STATE`が正しく設定されているか確認
+
+### 詳細なエラーログを見る
+
+```bash
+# APIを直接呼び出してエラーを確認
+curl -v "http://localhost:3000/api/availability?studios=crea&date=2026-01-27"
+```
+
+## ライセンス
+
+MIT
+
+## 貢献
+
+プルリクエストを歓迎します。大きな変更の場合は、まずissueを開いて変更内容を議論してください。

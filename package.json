@@ -8,8 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "auth:crea": "tsx scripts/save-crea-auth.ts",
+    "auth:export": "bash scripts/export-auth-env.sh",
     "test:civic-hall": "tsx scripts/test-civic-hall.ts",
-    "test:crea": "tsx scripts/test-crea.ts"
+    "test:crea": "tsx scripts/test-crea.ts",
+    "test:parallel": "tsx scripts/test-parallel.ts",
+    "test:auth": "tsx scripts/test-env-auth.ts"
   },
   "dependencies": {
     "cheerio": "^1.1.2",
