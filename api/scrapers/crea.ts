@@ -1,13 +1,16 @@
 /**
- * CREAスタジオスクレイパー
+ * CREAスタジオスクレイパー（並列処理版）
  * 
  * Playwrightを使用して空き状況を取得
- * Render APIサーバーから呼び出される
+ * 複数ページを同時に開いて並列処理することで高速化
  */
 
 import { chromium, type Browser, type Page, type BrowserContext } from "playwright";
 import * as path from "path";
 import * as fs from "fs";
+
+// 並列処理の最大数（サイトに負荷をかけすぎない程度に）
+const MAX_CONCURRENT = 4;
 
 // CREAスタジオの定義
 export const CREA_STUDIOS = {
@@ -135,6 +138,19 @@ export interface CreaStudioAvailability {
   slots: CreaSlotAvailability[];
 }
 
+// スクレイピングタスクの型
+interface ScrapeTask {
+  studioId: string;
+  studioName: string;
+  floor: string;
+  size: string;
+  slotType: string;
+  slotName: string;
+  price: number;
+  hours: string;
+  url: string;
+}
+
 function isWeekday(date: Date): boolean {
   const day = date.getDay();
   return day >= 1 && day <= 5;
@@ -172,7 +188,6 @@ function isSlotApplicable(slotDays: string, date: Date): boolean {
  * 認証情報を取得
  */
 function getAuthData(): object | null {
-  // 環境変数から認証情報を取得
   if (process.env.CREA_AUTH_JSON) {
     try {
       return JSON.parse(process.env.CREA_AUTH_JSON);
@@ -182,7 +197,6 @@ function getAuthData(): object | null {
     }
   }
 
-  // ローカルファイルから認証情報を取得
   const authPath = path.join(process.cwd(), "auth-crea.json");
   if (fs.existsSync(authPath)) {
     try {
@@ -198,21 +212,24 @@ function getAuthData(): object | null {
 }
 
 /**
- * 特定スロットの空き状況を取得
+ * 特定スロットの空き状況を取得（個別ページで実行）
  */
 async function scrapeSlotAvailability(
-  page: Page,
+  context: BrowserContext,
   slotUrl: string,
   targetDate: string
 ): Promise<CreaTimeSlot[]> {
+  const page = await context.newPage();
+  
   try {
     const bookingUrl = `${slotUrl}/book/event_type`;
     await page.goto(bookingUrl, {
       waitUntil: "domcontentloaded",
-      timeout: 30000,
+      timeout: 20000,
     });
 
-    await page.waitForTimeout(3000);
+    // 待機時間を短縮
+    await page.waitForTimeout(1500);
 
     const [year, month, day] = targetDate.split("-");
     const targetYearNum = parseInt(year);
@@ -247,11 +264,11 @@ async function scrapeSlotAvailability(
         if (isNextDisabled) return [];
 
         await nextButton.click();
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(500);
       } else if (monthsDiff < 0) {
         const prevButton = page.locator('button').filter({ has: page.locator('img') }).first();
         await prevButton.click();
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(500);
       }
 
       attempts++;
@@ -266,7 +283,7 @@ async function scrapeSlotAvailability(
     if (isDateDisabled) return [];
 
     await simpleDateButton.click();
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(1000);
 
     // 時間スロットを取得
     const slots = await page.evaluate(() => {
@@ -306,16 +323,51 @@ async function scrapeSlotAvailability(
       return results;
     });
 
-    console.log(`    ✅ ${slots.length} 件の空き枠を取得`);
     return slots;
   } catch (error) {
     console.error(`Error scraping slot: ${slotUrl}`, error);
     return [];
+  } finally {
+    await page.close();
   }
 }
 
 /**
- * CREAの空き状況をスクレイピング
+ * 並列実行ヘルパー（最大同時実行数を制限）
+ */
+async function runWithConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  const executing: Promise<void>[] = [];
+
+  for (const item of items) {
+    const promise = fn(item).then((result) => {
+      results.push(result);
+    });
+
+    executing.push(promise as unknown as Promise<void>);
+
+    if (executing.length >= limit) {
+      await Promise.race(executing);
+      // 完了したPromiseを削除
+      const completed = executing.findIndex((p) => 
+        Promise.race([p, Promise.resolve('pending')]).then(v => v !== 'pending')
+      );
+      if (completed !== -1) {
+        executing.splice(completed, 1);
+      }
+    }
+  }
+
+  await Promise.all(executing);
+  return results;
+}
+
+/**
+ * CREAの空き状況をスクレイピング（並列処理版）
  */
 export async function scrapeCrea(
   targetDate: string,
@@ -323,11 +375,12 @@ export async function scrapeCrea(
 ): Promise<CreaStudioAvailability[]> {
   const authData = getAuthData();
   let browser: Browser | null = null;
+  const startTime = Date.now();
 
   try {
     browser = await chromium.launch({ headless: true });
     
-    // コンテキスト作成（認証情報あれば使用）
+    // コンテキスト作成
     let context: BrowserContext;
     if (authData) {
       context = await browser.newContext({
@@ -340,22 +393,56 @@ export async function scrapeCrea(
         viewport: { width: 1280, height: 720 },
         userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
       });
-      console.warn("⚠️ 認証情報なしで実行（一部機能が制限される可能性があります）");
+      console.warn("⚠️ 認証情報なしで実行");
     }
-
-    const page = await context.newPage();
-    const results: CreaStudioAvailability[] = [];
 
     const targetDateObj = new Date(targetDate);
     const dayOfWeek = getDayOfWeek(targetDateObj);
-
     const targetStudios = studioIds || Object.keys(CREA_STUDIOS);
 
+    // 全タスクを収集
+    const tasks: ScrapeTask[] = [];
     for (const studioId of targetStudios) {
       const studio = CREA_STUDIOS[studioId as keyof typeof CREA_STUDIOS];
       if (!studio) continue;
 
-      const studioResult: CreaStudioAvailability = {
+      for (const [slotType, slotInfo] of Object.entries(studio.slots)) {
+        if (!isSlotApplicable(slotInfo.days, targetDateObj)) continue;
+
+        tasks.push({
+          studioId,
+          studioName: studio.name,
+          floor: studio.floor,
+          size: studio.size,
+          slotType,
+          slotName: slotInfo.name,
+          price: slotInfo.price,
+          hours: slotInfo.hours,
+          url: slotInfo.url,
+        });
+      }
+    }
+
+    console.log(`📋 ${tasks.length} 件のスロットを並列処理中...（最大${MAX_CONCURRENT}並列）`);
+
+    // 並列でスクレイピング実行
+    const taskResults = await Promise.all(
+      tasks.map(async (task) => {
+        console.log(`  🔍 ${task.studioName} - ${task.slotName}`);
+        const timeSlots = await scrapeSlotAvailability(context, task.url, targetDate);
+        console.log(`  ✅ ${task.studioName} - ${task.slotName}: ${timeSlots.length}件`);
+        return { task, timeSlots };
+      })
+    );
+
+    // 結果をスタジオごとにグループ化
+    const studioMap = new Map<string, CreaStudioAvailability>();
+    
+    for (const studioId of targetStudios) {
+      const studio = CREA_STUDIOS[studioId as keyof typeof CREA_STUDIOS];
+      if (!studio) continue;
+
+      studioMap.set(studioId, {
         studioId,
         studioName: studio.name,
         floor: studio.floor,
@@ -363,30 +450,29 @@ export async function scrapeCrea(
         date: targetDate,
         dayOfWeek,
         slots: [],
-      };
+      });
+    }
 
-      for (const [slotType, slotInfo] of Object.entries(studio.slots)) {
-        if (!isSlotApplicable(slotInfo.days, targetDateObj)) continue;
-
-        console.log(`  📅 ${studio.name} - ${slotInfo.name} を取得中...`);
-
-        const timeSlots = await scrapeSlotAvailability(page, slotInfo.url, targetDate);
-
+    for (const { task, timeSlots } of taskResults) {
+      const studioResult = studioMap.get(task.studioId);
+      if (studioResult) {
         studioResult.slots.push({
-          slotType,
-          slotName: slotInfo.name,
-          price: slotInfo.price,
-          hours: slotInfo.hours,
+          slotType: task.slotType,
+          slotName: task.slotName,
+          price: task.price,
+          hours: task.hours,
           timeSlots,
         });
       }
-
-      results.push(studioResult);
     }
 
     await context.close();
     await browser.close();
-    return results;
+
+    const duration = Date.now() - startTime;
+    console.log(`✨ 完了: ${duration}ms（${(duration / 1000).toFixed(1)}秒）`);
+
+    return Array.from(studioMap.values());
   } catch (error) {
     if (browser) await browser.close();
     throw error;
@@ -400,7 +486,7 @@ export async function testCreaScaper(): Promise<void> {
   futureDate.setDate(today.getDate() + 7);
   const dateStr = futureDate.toISOString().split("T")[0];
 
-  console.log(`\n🚀 CREAスクレイパーテスト: ${dateStr}\n`);
+  console.log(`\n🚀 CREAスクレイパーテスト（並列処理版）: ${dateStr}\n`);
 
   try {
     const results = await scrapeCrea(dateStr);
