@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page } from "playwright";
+import { launchBrowser, createPage, waitForNetworkIdle, clickByText, type Browser, type Page } from "./browser";
 
 // 時間スロットの定義
 export const TIME_SLOTS = {
@@ -33,17 +33,18 @@ export async function scrapeFukuokaCivicHall(
   let browser: Browser | null = null;
 
   try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+    browser = await launchBrowser();
+    const page = await createPage(browser);
 
     // サイトにアクセス
     await page.goto("https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php", {
-      waitUntil: "networkidle",
+      waitUntil: "networkidle0",
+      timeout: 60000,
     });
 
-    // 「施設の空きを見る」をクリック - リスト内の最初のリンクをクリック
-    await page.locator('li a:has-text("施設毎の空き状況")').first().click();
-    await page.waitForLoadState("networkidle");
+    // 「施設毎の空き状況」をクリック
+    await clickByText(page, "施設毎の空き状況");
+    await waitForNetworkIdle(page);
 
     // 日付を変換（2026-01-20 → 2026/01/20）
     const formattedDate = targetDate.replace(/-/g, "/");
@@ -73,7 +74,11 @@ async function navigateToDate(page: Page, targetDate: string): Promise<void> {
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // 現在表示されている日付を取得
-    const currentDateText = await page.textContent("h3:has-text('年')");
+    const currentDateText = await page.$eval("h3", (el) => {
+      const text = el.textContent || "";
+      return text.includes("年") ? text : null;
+    }).catch(() => null);
+
     if (!currentDateText) {
       throw new Error("Could not find date heading");
     }
@@ -97,20 +102,20 @@ async function navigateToDate(page: Page, targetDate: string): Promise<void> {
     const diffDays = Math.floor((target.getTime() - current.getTime()) / (1000 * 60 * 60 * 24));
 
     if (diffDays > 30) {
-      await page.click('text="1ヶ月後"');
+      await clickByText(page, "1ヶ月後");
     } else if (diffDays > 7) {
-      await page.click('text="1週間後"');
+      await clickByText(page, "1週間後");
     } else if (diffDays > 0) {
-      await page.click('text="1日後"');
+      await clickByText(page, "1日後");
     } else if (diffDays < -30) {
-      await page.click('text="1ヶ月前"');
+      await clickByText(page, "1ヶ月前");
     } else if (diffDays < -7) {
-      await page.click('text="1週間前"');
+      await clickByText(page, "1週間前");
     } else {
-      await page.click('text="1日前"');
+      await clickByText(page, "1日前");
     }
 
-    await page.waitForLoadState("networkidle");
+    await waitForNetworkIdle(page);
   }
 
   throw new Error(`Could not navigate to date: ${targetDate}`);

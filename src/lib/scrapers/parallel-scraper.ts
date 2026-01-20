@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { launchBrowser, createPage, waitForNetworkIdle, clickByText, wait, type Browser, type Page } from "./browser";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -113,14 +113,43 @@ function isSlotApplicable(days: string, date: Date): boolean {
   }
 }
 
+/**
+ * 認証情報を取得
+ */
+function getAuthData(): object | null {
+  // 環境変数から認証情報を取得（Vercel用）
+  if (process.env.CREA_AUTH_JSON) {
+    try {
+      return JSON.parse(process.env.CREA_AUTH_JSON);
+    } catch (e) {
+      console.error("CREA_AUTH_JSON の解析に失敗しました:", e);
+      return null;
+    }
+  }
+
+  // ローカルファイルから認証情報を取得
+  const authPath = path.join(process.cwd(), "auth-crea.json");
+  if (fs.existsSync(authPath)) {
+    try {
+      const content = fs.readFileSync(authPath, "utf-8");
+      return JSON.parse(content);
+    } catch (e) {
+      console.error("auth-crea.json の読み込みに失敗しました:", e);
+      return null;
+    }
+  }
+
+  return null;
+}
+
 // Fukuoka Civic Hall Scraper
 async function scrapeFukuoka(page: Page, targetDate: string): Promise<FukuokaRoom[]> {
   const url = "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php";
-  await page.goto(url, { waitUntil: "networkidle", timeout: 60000 });
+  await page.goto(url, { waitUntil: "networkidle0", timeout: 60000 });
   
   // Navigate to facility view
-  await page.locator('li a:has-text("施設毎の空き状況")').first().click();
-  await page.waitForLoadState("networkidle");
+  await clickByText(page, "施設毎の空き状況");
+  await waitForNetworkIdle(page);
 
   // Format target date for comparison
   const formattedTargetDate = targetDate.replace(/-/g, "/");
@@ -130,7 +159,11 @@ async function scrapeFukuoka(page: Page, targetDate: string): Promise<FukuokaRoo
   const maxAttempts = 60;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Get current date from h3 heading
-    const dateText = await page.textContent("h3:has-text('年')");
+    const dateText = await page.$eval("h3", (el) => {
+      const text = el.textContent || "";
+      return text.includes("年") ? text : null;
+    }).catch(() => null);
+
     if (!dateText) throw new Error("Could not find date heading");
 
     const dateMatch = dateText.match(/(\d{4}).*?年\s*(\d{1,2})月\s*(\d{1,2})日/);
@@ -145,20 +178,20 @@ async function scrapeFukuoka(page: Page, targetDate: string): Promise<FukuokaRoo
     const diffDays = Math.floor((targetDateObj.getTime() - current.getTime()) / (1000 * 60 * 60 * 24));
 
     if (diffDays > 30) {
-      await page.click('text="1ヶ月後"');
+      await clickByText(page, "1ヶ月後");
     } else if (diffDays > 7) {
-      await page.click('text="1週間後"');
+      await clickByText(page, "1週間後");
     } else if (diffDays > 0) {
-      await page.click('text="1日後"');
+      await clickByText(page, "1日後");
     } else if (diffDays < -30) {
-      await page.click('text="1ヶ月前"');
+      await clickByText(page, "1ヶ月前");
     } else if (diffDays < -7) {
-      await page.click('text="1週間前"');
+      await clickByText(page, "1週間前");
     } else {
-      await page.click('text="1日前"');
+      await clickByText(page, "1日前");
     }
 
-    await page.waitForLoadState("networkidle");
+    await waitForNetworkIdle(page);
   }
 
   // Extract availability
@@ -213,7 +246,7 @@ async function scrapeCreaSlot(
 ): Promise<CreaTimeSlot[]> {
   const bookingUrl = `${serviceUrl}/book/event_type`;
   await page.goto(bookingUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await page.waitForTimeout(2000);
+  await wait(2000);
 
   const [year, month, day] = targetDate.split("-");
   const targetYearNum = parseInt(year);
@@ -223,9 +256,19 @@ async function scrapeCreaSlot(
   // Navigate to correct month
   let monthAttempts = 0;
   while (monthAttempts < 6) {
-    const monthText = await page.locator('button[disabled]:has-text("年")').textContent().catch(() => "");
-    const yearMatch = monthText?.match(/(\d{4})年/);
-    const monthMatch = monthText?.match(/(\d{1,2})月/);
+    const monthButtonText = await page.evaluate(() => {
+      const buttons = document.querySelectorAll("button[disabled]");
+      for (const btn of buttons) {
+        const text = btn.textContent || "";
+        if (text.includes("年")) {
+          return text;
+        }
+      }
+      return "";
+    });
+
+    const yearMatch = monthButtonText?.match(/(\d{4})年/);
+    const monthMatch = monthButtonText?.match(/(\d{1,2})月/);
 
     if (yearMatch && monthMatch) {
       const currYear = parseInt(yearMatch[1]);
@@ -235,27 +278,52 @@ async function scrapeCreaSlot(
 
       const diff = (targetYearNum - currYear) * 12 + (targetMonthNum - currMonth);
       if (diff > 0) {
-        const nextBtn = page.locator('button').filter({ has: page.locator('img') }).last();
-        if (await nextBtn.isDisabled().catch(() => true)) return [];
-        await nextBtn.click();
-        await page.waitForTimeout(800);
+        const clicked = await page.evaluate(() => {
+          const buttons = document.querySelectorAll("button");
+          const imgButtons = Array.from(buttons).filter(btn => btn.querySelector("img"));
+          if (imgButtons.length > 0) {
+            const lastBtn = imgButtons[imgButtons.length - 1] as HTMLButtonElement;
+            if (!lastBtn.disabled) {
+              lastBtn.click();
+              return true;
+            }
+          }
+          return false;
+        });
+        if (!clicked) return [];
+        await wait(800);
       } else if (diff < 0) {
-        const prevBtn = page.locator('button').filter({ has: page.locator('img') }).first();
-        await prevBtn.click();
-        await page.waitForTimeout(800);
+        await page.evaluate(() => {
+          const buttons = document.querySelectorAll("button");
+          const imgButtons = Array.from(buttons).filter(btn => btn.querySelector("img"));
+          if (imgButtons.length > 0) {
+            (imgButtons[0] as HTMLButtonElement).click();
+          }
+        });
+        await wait(800);
       }
     }
     monthAttempts++;
   }
 
   // Click date
-  const dateBtn = page.locator(`button >> text="${targetDayNum}"`).first();
-  if (await dateBtn.count() === 0 || await dateBtn.isDisabled().catch(() => true)) {
+  const dateClicked = await page.evaluate((targetDay) => {
+    const buttons = document.querySelectorAll("button");
+    for (const btn of buttons) {
+      const text = btn.textContent?.trim();
+      if (text === String(targetDay) && !btn.disabled) {
+        (btn as HTMLButtonElement).click();
+        return true;
+      }
+    }
+    return false;
+  }, targetDayNum);
+
+  if (!dateClicked) {
     return [];
   }
 
-  await dateBtn.click();
-  await page.waitForTimeout(1500);
+  await wait(1500);
 
   // Extract time slots
   return await page.evaluate(() => {
@@ -278,7 +346,7 @@ async function scrapeCreaSlot(
   });
 }
 
-async function scrapeCrea(context: BrowserContext, targetDate: string): Promise<CreaStudio[]> {
+async function scrapeCrea(browser: Browser, targetDate: string, authData: object | null): Promise<CreaStudio[]> {
   const targetDateObj = new Date(targetDate);
   const results: CreaStudio[] = [];
 
@@ -291,85 +359,60 @@ async function scrapeCrea(context: BrowserContext, targetDate: string): Promise<
       slots: [],
     };
 
-    // Process slots in parallel within each studio
-    const slotPromises = Object.entries(studio.slots)
-      .filter(([, slot]) => isSlotApplicable(slot.days, targetDateObj))
-      .map(async ([slotType, slotInfo]) => {
-        const page = await context.newPage();
-        try {
-          const timeSlots = await scrapeCreaSlot(page, slotInfo.url, targetDate);
-          return {
-            slotType,
-            slotName: slotInfo.name,
-            price: slotInfo.price,
-            hours: slotInfo.hours,
-            timeSlots,
-          };
-        } finally {
-          await page.close();
-        }
-      });
+    // Process slots sequentially (to avoid overwhelming the server)
+    for (const [slotType, slotInfo] of Object.entries(studio.slots)) {
+      if (!isSlotApplicable(slotInfo.days, targetDateObj)) continue;
 
-    studioResult.slots = await Promise.all(slotPromises);
+      const page = await createPage(browser);
+      
+      // Set cookies if auth data available
+      if (authData) {
+        const authDataTyped = authData as { cookies?: Array<{ name: string; value: string; domain: string; path?: string }> };
+        if (authDataTyped.cookies) {
+          const cookies = authDataTyped.cookies.map((cookie) => ({
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path || "/",
+          }));
+          await page.setCookie(...cookies);
+        }
+      }
+
+      try {
+        const timeSlots = await scrapeCreaSlot(page, slotInfo.url, targetDate);
+        studioResult.slots.push({
+          slotType,
+          slotName: slotInfo.name,
+          price: slotInfo.price,
+          hours: slotInfo.hours,
+          timeSlots,
+        });
+      } finally {
+        await page.close();
+      }
+    }
+
     results.push(studioResult);
   }
 
   return results;
 }
 
-// Get auth state from environment variable or file
-function getAuthState(): any | null {
-  // Try environment variable first (for production)
-  const authJson = process.env.CREA_AUTH_STATE;
-  if (authJson) {
-    try {
-      return JSON.parse(authJson);
-    } catch (e) {
-      console.error("Failed to parse CREA_AUTH_STATE:", e);
-    }
-  }
-
-  // Fallback to file (for local development)
-  const authPath = path.join(process.cwd(), "auth-crea.json");
-  if (fs.existsSync(authPath)) {
-    try {
-      return JSON.parse(fs.readFileSync(authPath, "utf-8"));
-    } catch (e) {
-      console.error("Failed to read auth-crea.json:", e);
-    }
-  }
-
-  return null;
-}
-
 // Main parallel scraper
 export async function scrapeAllStudios(targetDate: string): Promise<ParallelScrapingResult> {
-  const authState = getAuthState();
+  const authData = getAuthData();
   
   let browser: Browser | null = null;
   const errors: string[] = [];
 
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await launchBrowser();
 
-    // Create contexts
-    const fukuokaContext = await browser.newContext({
-      viewport: { width: 1280, height: 720 },
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-    });
-
-    const creaContext = authState
-      ? await browser.newContext({
-          storageState: authState,
-          viewport: { width: 1280, height: 720 },
-          userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        })
-      : null;
-
-    // Execute in parallel
+    // Execute in parallel (Fukuoka and CREA)
     const [fukuokaResult, creaResult] = await Promise.all([
       (async () => {
-        const page = await fukuokaContext.newPage();
+        const page = await createPage(browser!);
         try {
           return await scrapeFukuoka(page, targetDate);
         } catch (e) {
@@ -380,21 +423,18 @@ export async function scrapeAllStudios(targetDate: string): Promise<ParallelScra
         }
       })(),
       (async () => {
-        if (!creaContext) {
-          errors.push("CREA: auth-crea.json not found");
+        if (!authData) {
+          errors.push("CREA: 認証情報が見つかりません");
           return [];
         }
         try {
-          return await scrapeCrea(creaContext, targetDate);
+          return await scrapeCrea(browser!, targetDate, authData);
         } catch (e) {
           errors.push(`CREA: ${e instanceof Error ? e.message : String(e)}`);
           return [];
         }
       })(),
     ]);
-
-    await fukuokaContext.close();
-    if (creaContext) await creaContext.close();
 
     return {
       fukuoka: fukuokaResult,

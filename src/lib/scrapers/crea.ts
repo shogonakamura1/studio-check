@@ -1,4 +1,4 @@
-import { chromium, type Browser, type Page, type BrowserContext } from "playwright";
+import { launchBrowser, createPage, wait, type Browser, type Page } from "./browser";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -186,34 +186,33 @@ function isSlotApplicable(
 }
 
 /**
- * 認証情報を取得（環境変数またはファイル）
+ * auth-crea.json が存在するか確認
+ * 環境変数 CREA_AUTH_JSON が設定されている場合はそちらを使用
  */
-function getAuthState(): any {
-  // Try environment variable first (for production)
-  const authJson = process.env.CREA_AUTH_STATE;
-  if (authJson) {
+function getAuthData(): object | null {
+  // 環境変数から認証情報を取得（Vercel用）
+  if (process.env.CREA_AUTH_JSON) {
     try {
-      return JSON.parse(authJson);
+      return JSON.parse(process.env.CREA_AUTH_JSON);
     } catch (e) {
-      console.error("Failed to parse CREA_AUTH_STATE:", e);
-      throw new Error("CREA_AUTH_STATE環境変数のパースに失敗しました");
+      console.error("CREA_AUTH_JSON の解析に失敗しました:", e);
+      return null;
     }
   }
 
-  // Fallback to file (for local development)
+  // ローカルファイルから認証情報を取得
   const authPath = path.join(process.cwd(), "auth-crea.json");
   if (fs.existsSync(authPath)) {
     try {
-      return authPath;
+      const content = fs.readFileSync(authPath, "utf-8");
+      return JSON.parse(content);
     } catch (e) {
-      console.error("Failed to read auth-crea.json:", e);
-      throw new Error("auth-crea.jsonの読み込みに失敗しました");
+      console.error("auth-crea.json の読み込みに失敗しました:", e);
+      return null;
     }
   }
 
-  throw new Error(
-    "認証情報が見つかりません。環境変数CREA_AUTH_STATEを設定するか、npm run auth:creaを実行してauth-crea.jsonを作成してください。"
-  );
+  return null;
 }
 
 /**
@@ -235,22 +234,30 @@ async function scrapeSlotAvailability(
     });
 
     // ページ読み込み待機
-    await page.waitForTimeout(3000);
+    await wait(3000);
 
     // 対象日付を解析
     const [year, month, day] = targetDate.split("-");
     const targetYearNum = parseInt(year);
     const targetMonthNum = parseInt(month);
     const targetDayNum = parseInt(day);
-    const targetDateFormatted = `${year}年${targetMonthNum}月${targetDayNum}日`;
 
     // まず、月をナビゲート
     let attempts = 0;
     const maxAttempts = 6; // 最大6ヶ月先まで
 
     while (attempts < maxAttempts) {
-      // 現在の月を確認
-      const monthButtonText = await page.locator('button[disabled]:has-text("年")').textContent().catch(() => "");
+      // 現在の月を確認（disabled属性のボタンを探す）
+      const monthButtonText = await page.evaluate(() => {
+        const buttons = document.querySelectorAll("button[disabled]");
+        for (const btn of buttons) {
+          const text = btn.textContent || "";
+          if (text.includes("年")) {
+            return text;
+          }
+        }
+        return "";
+      });
       
       if (!monthButtonText) {
         console.log("    ⚠️  月ボタンが見つかりません");
@@ -278,67 +285,60 @@ async function scrapeSlotAvailability(
       const monthsDiff = (targetYearNum - currentYear) * 12 + (targetMonthNum - currentMonth);
 
       if (monthsDiff > 0) {
-        // 次の月へ進む
-        const nextButton = page.locator('button').filter({ has: page.locator('img') }).last();
-        const isNextDisabled = await nextButton.isDisabled().catch(() => true);
+        // 次の月へ進む（img要素を含むボタンの最後のもの）
+        const clicked = await page.evaluate(() => {
+          const buttons = document.querySelectorAll("button");
+          const imgButtons = Array.from(buttons).filter(btn => btn.querySelector("img"));
+          if (imgButtons.length > 0) {
+            const lastBtn = imgButtons[imgButtons.length - 1] as HTMLButtonElement;
+            if (!lastBtn.disabled) {
+              lastBtn.click();
+              return true;
+            }
+          }
+          return false;
+        });
         
-        if (isNextDisabled) {
+        if (!clicked) {
           console.log(`    ⚠️  これ以上先の月には進めません`);
           return [];
         }
 
-        await nextButton.click();
-        await page.waitForTimeout(1000);
+        await wait(1000);
       } else if (monthsDiff < 0) {
         // 前の月へ戻る
-        const prevButton = page.locator('button').filter({ has: page.locator('img') }).first();
-        await prevButton.click();
-        await page.waitForTimeout(1000);
+        await page.evaluate(() => {
+          const buttons = document.querySelectorAll("button");
+          const imgButtons = Array.from(buttons).filter(btn => btn.querySelector("img"));
+          if (imgButtons.length > 0) {
+            (imgButtons[0] as HTMLButtonElement).click();
+          }
+        });
+        await wait(1000);
       }
 
       attempts++;
     }
 
-    // 日付ボタンを探す（アクセシブル名で検索）
-    const dateButton = page.locator(`button[aria-label="${targetDateFormatted}"], button:has([aria-label="${targetDateFormatted}"])`).first();
-    
-    // または、日付の数字を持つボタンを探す
-    const dayButton = page.locator(`button:has-text("${targetDayNum}")`).filter({ 
-      has: page.locator(`[aria-label*="${targetDayNum}日"], *:text-is("${targetDayNum}")`) 
-    }).first();
+    // 日付ボタンをクリック
+    const dateClicked = await page.evaluate((targetDay) => {
+      const buttons = document.querySelectorAll("button");
+      for (const btn of buttons) {
+        const text = btn.textContent?.trim();
+        if (text === String(targetDay) && !btn.disabled) {
+          (btn as HTMLButtonElement).click();
+          return true;
+        }
+      }
+      return false;
+    }, targetDayNum);
 
-    // さらにシンプルなセレクタで試す
-    const simpleDateButton = page.locator(`button >> text="${targetDayNum}"`).first();
-
-    let targetButton = dateButton;
-    let buttonFound = await dateButton.count() > 0;
-    
-    if (!buttonFound) {
-      buttonFound = await dayButton.count() > 0;
-      if (buttonFound) targetButton = dayButton;
-    }
-    
-    if (!buttonFound) {
-      buttonFound = await simpleDateButton.count() > 0;
-      if (buttonFound) targetButton = simpleDateButton;
-    }
-
-    if (!buttonFound) {
-      console.log(`    ⚠️  ${targetDateFormatted} のボタンが見つかりません`);
+    if (!dateClicked) {
+      console.log(`    ⚠️  ${targetYearNum}年${targetMonthNum}月${targetDayNum}日 は選択不可です`);
       return [];
     }
 
-    // ボタンが無効かチェック
-    const isDateDisabled = await targetButton.isDisabled().catch(() => true);
-
-    if (isDateDisabled) {
-      console.log(`    ⚠️  ${targetDateFormatted} は選択不可です`);
-      return [];
-    }
-
-    // 日付をクリック
-    await targetButton.click();
-    await page.waitForTimeout(1500);
+    await wait(1500);
 
     // 利用可能な時間スロットを取得
     const slots = await page.evaluate(() => {
@@ -400,21 +400,31 @@ export async function scrapeCrea(
   targetDate: string, // "2026-01-20" format
   studioIds?: string[] // 省略時は全スタジオ
 ): Promise<CreaStudioAvailability[]> {
-  const authState = getAuthState();
+  const authData = getAuthData();
+  if (!authData) {
+    throw new Error(
+      "認証情報が見つかりません。CREA_AUTH_JSON環境変数を設定するか、npm run auth:crea でログインセッションを保存してください。"
+    );
+  }
+
   let browser: Browser | null = null;
 
   try {
-    browser = await chromium.launch({ headless: true });
-    
-    // 保存済みセッションを使用
-    const context = await browser.newContext({
-      storageState: authState,
-      viewport: { width: 1280, height: 720 },
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    });
+    browser = await launchBrowser();
+    const page = await createPage(browser);
 
-    const page = await context.newPage();
+    // Cookieを設定（認証情報から）
+    const authDataTyped = authData as { cookies?: Array<{ name: string; value: string; domain: string; path?: string }> };
+    if (authDataTyped.cookies) {
+      const cookies = authDataTyped.cookies.map((cookie) => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path || "/",
+      }));
+      await page.setCookie(...cookies);
+    }
+
     const results: CreaStudioAvailability[] = [];
 
     const targetDateObj = new Date(targetDate);
