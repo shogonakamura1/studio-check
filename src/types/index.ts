@@ -9,15 +9,7 @@ export interface StudioAvailability {
   isAvailable: boolean;
 }
 
-// スタジオ情報の型
-export interface StudioInfo {
-  id: string; // "fukuokahonten", "fukuokatenjin", etc.
-  name: string; // "BUZZ福岡本店", etc.
-  url: string; // "https://buzz-st.com/fukuokahonten"
-  studioCount: number; // スタジオ数
-}
-
-// APIレスポンスの型
+// APIレスポンスの型（BUZZ系スタジオ用）
 export interface AvailabilityResponse {
   studioId: string;
   studioName: string;
@@ -27,64 +19,50 @@ export interface AvailabilityResponse {
   error?: string;
 }
 
-// 検索条件の型
-export interface SearchParams {
-  studioIds: string[];
-  date: string;
-}
-
 // 福岡市民会館用の型
-export interface CivicHallSlot {
-  status: string; // "○", "×", "●", "-"
-  date: string; // "2026/02/20"
-  slotId: string; // "0", "1", "2", "3"
-  timeRange: string; // "9:00-12:30"
-}
-
-export interface CivicHallRoomAvailability {
-  roomName: string;
-  slots: CivicHallSlot[];
-}
-
+// 注: 実際の実装は src/lib/scrapers/fukuoka-civic-hall.ts を参照
 export interface CivicHallResponse {
   studioId: string;
   studioName: string;
   date: string;
   dayOfWeek: string;
-  rooms: CivicHallRoomAvailability[];
+  rooms: Array<{
+    roomName: string;
+    slots: Array<{
+      status: string;
+      date: string;
+      slotId: string;
+      timeRange: string;
+    }>;
+  }>;
   error?: string;
 }
 
 // CREA用の型
-export interface CreaTimeSlot {
-  time: string; // "06:00", "07:00", etc.
-  available: boolean;
-}
-
-export interface CreaSlotAvailability {
-  slotType: string; // "morning", "weekdayDay", etc.
-  slotName: string; // "朝活", "平日昼", etc.
-  price: number;
-  hours: string;
-  timeSlots: CreaTimeSlot[];
-}
-
-export interface CreaStudioAvailability {
-  studioId: string;
-  studioName: string;
-  floor: string;
-  size: string;
-  date: string;
-  dayOfWeek: string;
-  slots: CreaSlotAvailability[];
-  error?: string;
-}
-
+// 注: 実際の実装は src/lib/scrapers/crea.ts を参照
 export interface CreaResponse {
   studioId: string;
   studioName: string;
   date: string;
   dayOfWeek: string;
-  studios: CreaStudioAvailability[];
+  studios: Array<{
+    studioId: string;
+    studioName: string;
+    floor: string;
+    size: string;
+    date: string;
+    dayOfWeek: string;
+    slots: Array<{
+      slotType: string;
+      slotName: string;
+      price: number;
+      hours: string;
+      timeSlots: Array<{
+        time: string;
+        available: boolean;
+      }>;
+    }>;
+    error?: string;
+  }>;
   error?: string;
 }

@@ -10,8 +10,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse, CreaResponse } from "@/types";
-import { scrapeFukuokaCivicHall, type RoomAvailability } from "../../../../api/scrapers/fukuoka-civic-hall";
-import { scrapeCrea, type CreaStudioAvailability } from "../../../../api/scrapers/crea";
+import { scrapeFukuokaCivicHall, type RoomAvailability } from "@/lib/scrapers/fukuoka-civic-hall";
+import { scrapeCrea, type CreaStudioAvailability } from "@/lib/scrapers/crea";
 
 // スタジオ情報のマスターデータ
 const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number; type?: string }> = {
