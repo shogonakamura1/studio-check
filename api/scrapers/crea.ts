@@ -9,8 +9,8 @@ import { chromium, type Browser, type Page, type BrowserContext } from "playwrig
 import * as path from "path";
 import * as fs from "fs";
 
-// 並列処理の最大数（サイトに負荷をかけすぎない程度に）
-const MAX_CONCURRENT = 4;
+// 並列処理の最大数（Render無料プランはメモリ512MBのため控えめに）
+const MAX_CONCURRENT = 2;
 
 // CREAスタジオの定義
 export const CREA_STUDIOS = {
@@ -340,29 +340,28 @@ async function runWithConcurrencyLimit<T, R>(
   limit: number,
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
-  const results: R[] = [];
-  const executing: Promise<void>[] = [];
+  const results: R[] = new Array(items.length);
+  let currentIndex = 0;
 
-  for (const item of items) {
-    const promise = fn(item).then((result) => {
-      results.push(result);
-    });
-
-    executing.push(promise as unknown as Promise<void>);
-
-    if (executing.length >= limit) {
-      await Promise.race(executing);
-      // 完了したPromiseを削除
-      const completed = executing.findIndex((p) => 
-        Promise.race([p, Promise.resolve('pending')]).then(v => v !== 'pending')
-      );
-      if (completed !== -1) {
-        executing.splice(completed, 1);
+  async function worker() {
+    while (currentIndex < items.length) {
+      const index = currentIndex++;
+      const item = items[index];
+      try {
+        results[index] = await fn(item);
+      } catch (error) {
+        console.error(`Task ${index} failed:`, error);
+        results[index] = null as unknown as R;
       }
     }
   }
 
-  await Promise.all(executing);
+  // limit個のワーカーを起動
+  const workers = Array(Math.min(limit, items.length))
+    .fill(null)
+    .map(() => worker());
+
+  await Promise.all(workers);
   return results;
 }
 
@@ -423,16 +422,18 @@ export async function scrapeCrea(
       }
     }
 
-    console.log(`📋 ${tasks.length} 件のスロットを並列処理中...（最大${MAX_CONCURRENT}並列）`);
+    console.log(`📋 ${tasks.length} 件のスロットを処理中...（最大${MAX_CONCURRENT}並列）`);
 
-    // 並列でスクレイピング実行
-    const taskResults = await Promise.all(
-      tasks.map(async (task) => {
+    // 並列数を制限してスクレイピング実行
+    const taskResults = await runWithConcurrencyLimit(
+      tasks,
+      MAX_CONCURRENT,
+      async (task) => {
         console.log(`  🔍 ${task.studioName} - ${task.slotName}`);
         const timeSlots = await scrapeSlotAvailability(context, task.url, targetDate);
         console.log(`  ✅ ${task.studioName} - ${task.slotName}: ${timeSlots.length}件`);
         return { task, timeSlots };
-      })
+      }
     );
 
     // 結果をスタジオごとにグループ化
