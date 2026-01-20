@@ -1,9 +1,9 @@
 /**
  * Render用スクレイピングAPIサーバー
  * 
- * Playwrightを使用するスクレイピング処理を担当
- * - 福岡市民会館（部屋単位で指定可能）
- * - CREA（スタジオ単位で指定可能）
+ * API/HTTPリクエストで空き状況を取得
+ * - 福岡市民会館（POSTリクエスト + HTMLパース、部屋単位で指定可能）
+ * - CREA（Coubic API、スタジオ単位で指定可能）
  */
 
 import http from "http";
