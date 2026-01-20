@@ -4,11 +4,9 @@
 services:
   - type: web
     name: studio-check-api
-    env: node
+    runtime: docker
     region: oregon
     plan: free
-    buildCommand: npm install && npx playwright install chromium --with-deps
-    startCommand: npm run api:start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
