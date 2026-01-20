@@ -12,18 +12,21 @@ export const CREA_STUDIOS = {
     floor: "2F",
     size: "77㎡",
     publicIds: ["960818", "968953", "506244"], // 朝活, 平日昼, 平日夜・土日
+    slotTypes: ["朝活", "平日昼", "平日夜・土日"],
   },
   "crea-plus": {
     name: "CREA+",
     floor: "4F",
     size: "100㎡",
     publicIds: ["802390", "592262", "419056"], // 平日昼, 平日夜, 土日
+    slotTypes: ["平日昼", "平日夜", "土日"],
   },
   "crea-daimyo2": {
     name: "CREA大名Ⅱ",
     floor: "3F",
     size: "49㎡",
     publicIds: ["563872", "519534", "782437"], // 朝活, 平日昼, 平日夜・土日
+    slotTypes: ["朝活", "平日昼", "平日夜・土日"],
   },
 } as const;
 
@@ -148,6 +151,26 @@ function getHoursFromSlotName(slotName: string): string {
       return "6:00-23:00";
     default:
       return "";
+  }
+}
+
+/**
+ * スロット名から価格を推定
+ */
+function getPriceFromSlotName(slotName: string): number {
+  switch (slotName) {
+    case "朝活":
+      return 500;
+    case "平日昼":
+      return 1980;
+    case "平日夜・土日":
+      return 2980;
+    case "平日夜":
+      return 2980;
+    case "土日":
+      return 2980;
+    default:
+      return 0;
   }
 }
 
@@ -279,22 +302,26 @@ export async function scrapeCrea(
     // イベントをスロットタイプごとにグループ化
     const slotGroups = new Map<string, { slotName: string; price: number; hours: string; times: CreaTimeSlot[] }>();
     
-    // まず、すべてのpublic_idについて初期化（available: falseで全時間帯を生成）
-    for (const event of data.data) {
-      const studioId = PUBLIC_ID_TO_STUDIO[event.public_id];
-      if (!studioId || !targetStudios.includes(studioId)) continue;
+    // まず、すべてのスタジオの全public_idについて初期化（available: falseで全時間帯を生成）
+    for (const studioId of targetStudios) {
+      const studio = CREA_STUDIOS[studioId as keyof typeof CREA_STUDIOS];
+      if (!studio) continue;
       
-      const { slotName, price } = parseSlotTitle(event.title);
-      const slotKey = `${studioId}:${event.public_id}`;
-      
-      if (!slotGroups.has(slotKey)) {
-        // すべての時間スロットを生成（デフォルトで available: false）
-        slotGroups.set(slotKey, {
-          slotName,
-          price,
-          hours: getHoursFromSlotName(slotName),
-          times: generateAllTimeSlots(slotName),
-        });
+      // 各スタジオの全public_idに対してスロットを初期化
+      for (let i = 0; i < studio.publicIds.length; i++) {
+        const publicId = studio.publicIds[i];
+        const slotName = studio.slotTypes[i];
+        const slotKey = `${studioId}:${publicId}`;
+        
+        if (!slotGroups.has(slotKey)) {
+          // すべての時間スロットを生成（デフォルトで available: false）
+          slotGroups.set(slotKey, {
+            slotName,
+            price: getPriceFromSlotName(slotName),
+            hours: getHoursFromSlotName(slotName),
+            times: generateAllTimeSlots(slotName),
+          });
+        }
       }
     }
     
@@ -310,6 +337,12 @@ export async function scrapeCrea(
       const slotKey = `${studioId}:${event.public_id}`;
       const group = slotGroups.get(slotKey);
       if (!group) continue;
+      
+      // APIから価格情報が取得できた場合は更新
+      const { price: eventPrice } = parseSlotTitle(event.title);
+      if (eventPrice > 0) {
+        group.price = eventPrice;
+      }
       
       const time = formatTime(event.start);
       
