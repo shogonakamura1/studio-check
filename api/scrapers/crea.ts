@@ -98,20 +98,6 @@ export const CREA_STUDIOS = {
       },
     },
   },
-  "crea-music": {
-    name: "CREA music",
-    floor: "3F",
-    size: "28.6㎡",
-    slots: {
-      morning: {
-        name: "朝活",
-        price: 1000,
-        hours: "6:00-9:00",
-        url: "https://coubic.com/rentalstudiocrea/972917",
-        days: "all",
-      },
-    },
-  },
 } as const;
 
 // 出力型

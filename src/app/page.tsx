@@ -12,32 +12,21 @@ const BUZZ_STUDIOS = [
   { id: "fukuokahakataekimae", name: "BUZZ福岡博多駅前", location: "博多駅徒歩2分" },
 ];
 
-// 市民会館・ホール系スタジオ情報（スクレイピング対応）
-const CIVIC_HALL_STUDIOS = [
-  {
-    id: "fukuokacivichall",
-    name: "福岡市民会館",
-    location: "天神駅徒歩10分",
-    rooms: ["リハーサル室", "練習室①", "練習室③"],
-  },
+// 市民会館・ホール系（部屋単位で選択可能）
+const CIVIC_HALL_ROOMS = [
+  { id: "civichall-rehearsal", name: "リハーサル室", parent: "福岡市民会館", location: "天神駅徒歩10分" },
+  { id: "civichall-practice1", name: "練習室①", parent: "福岡市民会館", location: "天神駅徒歩10分" },
+  { id: "civichall-practice3", name: "練習室③", parent: "福岡市民会館", location: "天神駅徒歩10分" },
 ];
 
-// CREAスタジオ情報（スクレイピング対応）
+// CREAスタジオ（スタジオ単位で選択可能、musicは除外）
 const CREA_STUDIOS = [
-  {
-    id: "crea",
-    name: "レンタルスタジオCREA",
-    location: "大名エリア（天神駅徒歩5分）",
-    studios: [
-      { name: "CREA大名", floor: "2F", size: "77㎡" },
-      { name: "CREA+", floor: "4F", size: "100㎡" },
-      { name: "CREA大名Ⅱ", floor: "3F", size: "49㎡" },
-      { name: "CREA music", floor: "3F", size: "28.6㎡" },
-    ],
-  },
+  { id: "crea-daimyo", name: "CREA大名", floor: "2F", size: "77㎡", location: "大名エリア" },
+  { id: "crea-plus", name: "CREA+", floor: "4F", size: "100㎡", location: "大名エリア" },
+  { id: "crea-daimyo2", name: "CREA大名Ⅱ", floor: "3F", size: "49㎡", location: "大名エリア" },
 ];
 
-// 外部スタジオ情報（リンクのみ）- CREAは対応済みなので空
+// 外部スタジオ情報（リンクのみ）
 const EXTERNAL_STUDIOS: Array<{
   id: string;
   name: string;
@@ -282,19 +271,19 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 市民会館・ホール系スタジオ選択 */}
+          {/* 市民会館・ホール系（部屋単位で選択） */}
           <div className="mb-6">
             <label className="block text-sm text-muted mb-3">
-              <span className="text-blue-500">●</span> 市民会館・ホール系（空き状況を表示）
+              <span className="text-blue-500">●</span> 福岡市民会館（部屋を個別に選択）
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {CIVIC_HALL_STUDIOS.map((studio) => (
+              {CIVIC_HALL_ROOMS.map((room) => (
                 <label
-                  key={studio.id}
+                  key={room.id}
                   className={`
                     flex items-center gap-3 p-4 rounded-lg border cursor-pointer transition-all
                     ${
-                      selectedStudios.includes(studio.id)
+                      selectedStudios.includes(room.id)
                         ? "border-blue-500 bg-blue-500/10"
                         : "border-border bg-card hover:border-muted"
                     }
@@ -302,21 +291,21 @@ export default function Home() {
                 >
                   <input
                     type="checkbox"
-                    checked={selectedStudios.includes(studio.id)}
-                    onChange={() => toggleStudio(studio.id)}
+                    checked={selectedStudios.includes(room.id)}
+                    onChange={() => toggleStudio(room.id)}
                     className="sr-only"
                   />
                   <div
                     className={`
                       w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
                       ${
-                        selectedStudios.includes(studio.id)
+                        selectedStudios.includes(room.id)
                           ? "border-blue-500 bg-blue-500"
                           : "border-muted"
                       }
                     `}
                   >
-                    {selectedStudios.includes(studio.id) && (
+                    {selectedStudios.includes(room.id) && (
                       <svg
                         className="w-3 h-3 text-background"
                         fill="none"
@@ -333,10 +322,10 @@ export default function Home() {
                     )}
                   </div>
                   <div>
-                    <div className="font-medium text-sm">{studio.name}</div>
-                    <div className="text-xs text-muted">{studio.location}</div>
+                    <div className="font-medium text-sm">{room.name}</div>
+                    <div className="text-xs text-muted">{room.parent}</div>
                     <div className="text-xs text-blue-500/70 mt-0.5">
-                      {studio.rooms.join(", ")}
+                      {room.location}
                     </div>
                   </div>
                 </label>
@@ -344,10 +333,10 @@ export default function Home() {
             </div>
           </div>
 
-          {/* CREAスタジオ選択 */}
+          {/* CREAスタジオ選択（スタジオ単位） */}
           <div className="mb-6">
             <label className="block text-sm text-muted mb-3">
-              <span className="text-purple-500">●</span> レンタルスタジオCREA（空き状況を表示）
+              <span className="text-purple-500">●</span> レンタルスタジオCREA（スタジオを個別に選択）
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {CREA_STUDIOS.map((studio) => (
@@ -396,16 +385,16 @@ export default function Home() {
                   </div>
                   <div>
                     <div className="font-medium text-sm">{studio.name}</div>
-                    <div className="text-xs text-muted">{studio.location}</div>
+                    <div className="text-xs text-muted">{studio.floor} / {studio.size}</div>
                     <div className="text-xs text-purple-500/70 mt-0.5">
-                      {studio.studios.map(s => s.name).join(", ")}
+                      {studio.location}
                     </div>
                   </div>
                 </label>
               ))}
             </div>
             <p className="text-xs text-muted mt-2">
-              ※ CREAは取得に時間がかかる場合があります（約30秒）
+              ※ CREAは1スタジオあたり約10秒かかります
             </p>
           </div>
 
