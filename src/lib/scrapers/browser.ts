@@ -1,4 +1,5 @@
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 
 /**
  * Vercel環境かどうかを判定
@@ -15,13 +16,17 @@ function isVercel(): boolean {
 export async function launchBrowser(): Promise<Browser> {
   if (isVercel()) {
     // Vercel/Lambda環境
-    const chromium = await import("@sparticuz/chromium");
-    
+    // @sparticuz/chromiumの設定
+    chromium.setHeadlessMode = true;
+    chromium.setGraphicsMode = false;
+
+    const executablePath = await chromium.executablePath();
+
     return puppeteer.launch({
-      args: chromium.default.args,
-      defaultViewport: chromium.default.defaultViewport,
-      executablePath: await chromium.default.executablePath(),
-      headless: true,
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath,
+      headless: chromium.headless,
     });
   } else {
     // ローカル開発環境
@@ -36,11 +41,11 @@ export async function launchBrowser(): Promise<Browser> {
 
     let executablePath: string | undefined;
     
-    for (const path of possiblePaths) {
+    for (const chromePath of possiblePaths) {
       try {
         const fs = await import("fs");
-        if (fs.existsSync(path)) {
-          executablePath = path;
+        if (fs.existsSync(chromePath)) {
+          executablePath = chromePath;
           break;
         }
       } catch {
