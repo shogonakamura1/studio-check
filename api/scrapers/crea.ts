@@ -198,6 +198,27 @@ function getAuthData(): object | null {
 }
 
 /**
+ * モーダルを閉じる処理
+ * ReactModalPortalなどのオーバーレイがクリックをインターセプトする問題を回避
+ */
+async function closeAnyModals(page: Page): Promise<void> {
+  try {
+    // Escapeキーでモーダルを閉じる
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(200);
+    
+    // オーバーレイ背景がある場合はクリックして閉じる
+    const overlay = page.locator('.RSModal_overlayBase, .ReactModalPortal, [class*="overlay"]').first();
+    if (await overlay.count() > 0 && await overlay.isVisible().catch(() => false)) {
+      await overlay.click({ force: true, timeout: 1000 }).catch(() => {});
+      await page.waitForTimeout(200);
+    }
+  } catch {
+    // モーダルがない場合は無視
+  }
+}
+
+/**
  * 特定スロットの空き状況を取得（個別ページで実行）
  */
 async function scrapeSlotAvailability(
@@ -216,6 +237,9 @@ async function scrapeSlotAvailability(
 
     // 待機時間を短縮
     await page.waitForTimeout(1500);
+
+    // モーダルが表示されている場合は閉じる
+    await closeAnyModals(page);
 
     const [year, month, day] = targetDate.split("-");
     const targetYearNum = parseInt(year);
@@ -249,11 +273,11 @@ async function scrapeSlotAvailability(
         
         if (isNextDisabled) return [];
 
-        await nextButton.click();
+        await nextButton.click({ force: true, timeout: 5000 });
         await page.waitForTimeout(500);
       } else if (monthsDiff < 0) {
         const prevButton = page.locator('button').filter({ has: page.locator('img') }).first();
-        await prevButton.click();
+        await prevButton.click({ force: true, timeout: 5000 });
         await page.waitForTimeout(500);
       }
 
@@ -268,7 +292,7 @@ async function scrapeSlotAvailability(
     const isDateDisabled = await simpleDateButton.isDisabled().catch(() => true);
     if (isDateDisabled) return [];
 
-    await simpleDateButton.click();
+    await simpleDateButton.click({ force: true, timeout: 5000 });
     await page.waitForTimeout(1000);
 
     // 時間スロットを取得
