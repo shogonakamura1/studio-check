@@ -26,16 +26,6 @@ const CREA_STUDIOS = [
   { id: "crea-daimyo2", name: "CREA大名Ⅱ", floor: "3F", size: "49㎡", location: "大名エリア" },
 ];
 
-// 外部スタジオ情報（リンクのみ）
-const EXTERNAL_STUDIOS: Array<{
-  id: string;
-  name: string;
-  location: string;
-  url: string;
-  rooms: string[];
-  description: string;
-}> = [];
-
 // 時間オプション（06:00〜23:30まで30分刻み）
 const TIME_OPTIONS = Array.from({ length: 36 }, (_, i) => {
   const hour = Math.floor(i / 2) + 6;
@@ -587,43 +577,82 @@ export default function Home() {
                                   </span>
                                 </h4>
                               </div>
-                              <div className="p-4 space-y-4">
-                                {creaStudio.slots.map((slot) => {
-                                  const availableSlots = slot.timeSlots.filter(ts => ts.available);
-                                  if (availableSlots.length === 0) return null;
-                                  
-                                  return (
-                                    <div key={slot.slotType} className="bg-card-hover rounded-lg p-3">
-                                      <div className="flex items-center justify-between mb-2">
-                                        <span className="text-sm font-medium">
-                                          {slot.slotName}
-                                          <span className="text-muted font-normal ml-2 text-xs">
-                                            ({slot.hours})
-                                          </span>
-                                        </span>
-                                        <span className="text-purple-400 text-sm font-mono">
-                                          ¥{slot.price.toLocaleString()}
-                                        </span>
-                                      </div>
-                                      <div className="flex flex-wrap gap-2">
-                                        {availableSlots.map((ts) => (
-                                          <div
-                                            key={ts.time}
-                                            className="px-3 py-1.5 rounded-md bg-accent/20 border border-accent/40 text-xs font-mono"
-                                          >
-                                            {ts.time}〜
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                                {creaStudio.slots.every(s => s.timeSlots.filter(ts => ts.available).length === 0) && (
-                                  <div className="text-center text-muted text-sm py-4">
-                                    指定した時間帯に空きがありません
+                              {creaStudio.slots.map((slot) => (
+                                <div key={slot.slotType} className="border-b border-border last:border-b-0">
+                                  <div className="bg-card-hover px-4 py-2 border-b border-border flex items-center justify-between">
+                                    <h5 className="font-medium text-sm">
+                                      {slot.slotName}
+                                      <span className="text-muted font-normal ml-2 text-xs">
+                                        ({slot.hours})
+                                      </span>
+                                    </h5>
+                                    <span className="text-purple-400 text-sm font-mono">
+                                      ¥{slot.price.toLocaleString()}
+                                    </span>
                                   </div>
-                                )}
-                              </div>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                      <thead>
+                                        <tr className="border-b border-border">
+                                          <th className="px-4 py-3 text-left text-muted font-medium">
+                                            時間帯
+                                          </th>
+                                          <th className="px-4 py-3 text-center text-muted font-medium">
+                                            状況
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {slot.timeSlots.length > 0 ? (
+                                          slot.timeSlots.map((ts) => (
+                                            <tr
+                                              key={ts.time}
+                                              className="border-b border-border/50 hover:bg-card-hover transition-colors"
+                                            >
+                                              <td className="px-4 py-3 font-mono text-muted">
+                                                {ts.time}〜
+                                              </td>
+                                              <td className="px-4 py-3 text-center">
+                                                <div
+                                                  className={`
+                                                    inline-flex items-center justify-center w-12 h-8 rounded-md transition-all
+                                                    ${
+                                                      ts.available
+                                                        ? "bg-accent/20 border border-accent/40"
+                                                        : "bg-danger/20 border border-danger/40"
+                                                    }
+                                                  `}
+                                                  title={ts.available ? "空き" : "予約済み"}
+                                                >
+                                                  <span
+                                                    className={`
+                                                      text-sm
+                                                      ${ts.available ? "text-accent" : "text-danger/60"}
+                                                    `}
+                                                  >
+                                                    {ts.available ? "○" : "×"}
+                                                  </span>
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          ))
+                                        ) : (
+                                          <tr>
+                                            <td colSpan={2} className="px-4 py-4 text-center text-muted">
+                                              この時間帯のデータがありません
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ))}
+                              {creaStudio.slots.length === 0 && (
+                                <div className="text-center text-muted text-sm py-4">
+                                  指定した時間帯に空きがありません
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
