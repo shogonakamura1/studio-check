@@ -1,18 +1,17 @@
 /**
  * 空き状況APIエンドポイント
  * 
- * - BUZZスタジオ: Vercel内でcheerioを使用してスクレイピング
- * - 福岡市民会館/CREA: Render APIに委譲（Playwright使用）
- *   - 市民ホール: civichall-rehearsal, civichall-practice1, civichall-practice3
- *   - CREA: crea-daimyo, crea-plus, crea-daimyo2
+ * すべてのスクレイピングをVercel内で実行
+ * - BUZZスタジオ: cheerioを使用してスクレイピング
+ * - 福岡市民会館: POSTリクエスト + HTMLパース
+ * - CREA: Coubic APIから直接取得
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import * as cheerio from "cheerio";
 import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse, CreaResponse } from "@/types";
-
-// Render APIのベースURL（環境変数で設定）
-const RENDER_API_URL = process.env.RENDER_API_URL || "https://studio-check-api.onrender.com";
+import { scrapeFukuokaCivicHall, type RoomAvailability } from "../../../../api/scrapers/fukuoka-civic-hall";
+import { scrapeCrea, type CreaStudioAvailability, CREA_STUDIOS } from "../../../../api/scrapers/crea";
 
 // スタジオ情報のマスターデータ
 const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number; type?: string }> = {
@@ -83,9 +82,9 @@ const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: numb
 
 // 市民ホール部屋IDマッピング
 const CIVIC_HALL_ROOM_MAP: Record<string, string> = {
-  "civichall-rehearsal": "rehearsal",
-  "civichall-practice1": "practice1",
-  "civichall-practice3": "practice3",
+  "civichall-rehearsal": "リハーサル室",
+  "civichall-practice1": "練習室①",
+  "civichall-practice3": "練習室③",
 };
 
 // 曜日を取得
@@ -179,45 +178,34 @@ async function scrapeBuzzAvailability(
   }
 }
 
-// 福岡市民会館用（部屋単位、Render APIに委譲）
+// 福岡市民会館用（部屋単位、直接スクレイピング）
 async function scrapeCivicHallRoomAvailability(
   studioId: string,
   date: string
 ): Promise<CivicHallResponse> {
   const studioInfo = STUDIO_DATA[studioId];
-  const roomId = CIVIC_HALL_ROOM_MAP[studioId];
+  const targetRoomName = CIVIC_HALL_ROOM_MAP[studioId];
 
   try {
-    const apiUrl = `${RENDER_API_URL}/api/scrape/civic-hall?date=${date}&rooms=${roomId}`;
-    console.log(`[CivicHall] Render APIにリクエスト: ${apiUrl}`);
+    console.log(`[CivicHall] スクレイピング開始: ${date}, room: ${targetRoomName}`);
     
-    const response = await fetch(apiUrl, {
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal: AbortSignal.timeout(120000),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
+    // スクレイパーを直接呼び出し
+    const allRooms: RoomAvailability[] = await scrapeFukuokaCivicHall(date);
     
-    if (!data.success) {
-      throw new Error(data.error || "Render APIからエラーが返されました");
-    }
+    // 対象の部屋のみフィルター
+    const filteredRooms = allRooms.filter(room => 
+      room.roomName.includes(targetRoomName)
+    );
 
     return {
       studioId,
       studioName: studioInfo.name,
       date,
       dayOfWeek: getDayOfWeek(date),
-      rooms: data.rooms || [],
+      rooms: filteredRooms,
     };
   } catch (error) {
-    console.error(`Error fetching civic-hall room from Render:`, error);
+    console.error(`[CivicHall] エラー:`, error);
     return {
       studioId,
       studioName: studioInfo.name,
@@ -229,7 +217,7 @@ async function scrapeCivicHallRoomAvailability(
   }
 }
 
-// CREA用（スタジオ単位、Render APIに委譲）
+// CREA用（スタジオ単位、直接API呼び出し）
 async function scrapeCreaStudioAvailability(
   studioId: string,
   date: string
@@ -237,36 +225,20 @@ async function scrapeCreaStudioAvailability(
   const studioInfo = STUDIO_DATA[studioId];
 
   try {
-    const apiUrl = `${RENDER_API_URL}/api/scrape/crea?date=${date}&studios=${studioId}`;
-    console.log(`[CREA] Render APIにリクエスト: ${apiUrl}`);
+    console.log(`[CREA] スクレイピング開始: ${date}, studio: ${studioId}`);
     
-    const response = await fetch(apiUrl, {
-      headers: {
-        "Content-Type": "application/json",
-      },
-      signal: AbortSignal.timeout(120000),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
+    // スクレイパーを直接呼び出し（スタジオIDを指定）
+    const allStudios: CreaStudioAvailability[] = await scrapeCrea(date, [studioId]);
     
-    if (!data.success) {
-      throw new Error(data.error || "Render APIからエラーが返されました");
-    }
-
     return {
       studioId,
       studioName: studioInfo.name,
       date,
       dayOfWeek: getDayOfWeek(date),
-      studios: data.studios || [],
+      studios: allStudios,
     };
   } catch (error) {
-    console.error(`Error fetching crea studio from Render:`, error);
+    console.error(`[CREA] エラー:`, error);
     return {
       studioId,
       studioName: studioInfo.name,
@@ -296,22 +268,22 @@ async function scrapeAvailability(
     };
   }
 
-  // 福岡市民会館（部屋単位） → Render API
+  // 福岡市民会館（部屋単位）
   if (studioInfo.type === "civic-hall-room") {
     return scrapeCivicHallRoomAvailability(studioId, date);
   }
 
-  // CREA（スタジオ単位） → Render API
+  // CREA（スタジオ単位）
   if (studioInfo.type === "crea-studio") {
     return scrapeCreaStudioAvailability(studioId, date);
   }
 
-  // BUZZ系 → Vercel内で実行
+  // BUZZ系
   return scrapeBuzzAvailability(studioId, date);
 }
 
 // Vercel Serverless Functionsの設定
-export const maxDuration = 120;
+export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 // GET /api/availability?studios=fukuokahonten,crea-daimyo&date=2026-01-20
