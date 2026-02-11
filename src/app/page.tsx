@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import type { AvailabilityResponse, CivicHallResponse, CreaResponse } from "@/types";
+import type {
+  AvailabilityResponse,
+  CivicHallResponse,
+  CreaResponse,
+} from "@/types";
 
 // BUZZ系スタジオ情報（スクレイピング対応）
 const BUZZ_STUDIOS = [
@@ -12,29 +16,92 @@ const BUZZ_STUDIOS = [
 
 // 市民会館・ホール系（部屋単位で選択可能）
 const CIVIC_HALL_ROOMS = [
-  { id: "civichall-rehearsal", name: "リハーサル室", parent: "福岡市民会館", location: "天神駅徒歩10分" },
-  { id: "civichall-practice1", name: "練習室①", parent: "福岡市民会館", location: "天神駅徒歩10分" },
-  { id: "civichall-practice3", name: "練習室③", parent: "福岡市民会館", location: "天神駅徒歩10分" },
+  {
+    id: "civichall-rehearsal",
+    name: "リハーサル室",
+    parent: "福岡市民会館",
+    location: "天神駅徒歩10分",
+  },
+  {
+    id: "civichall-practice1",
+    name: "練習室①",
+    parent: "福岡市民会館",
+    location: "天神駅徒歩10分",
+  },
+  {
+    id: "civichall-practice3",
+    name: "練習室③",
+    parent: "福岡市民会館",
+    location: "天神駅徒歩10分",
+  },
 ];
 
 // CREAスタジオ（スタジオ単位で選択可能、musicは除外）
 const CREA_STUDIOS = [
-  { id: "crea-daimyo", name: "CREA大名", floor: "2F", size: "77㎡", location: "大名エリア" },
-  { id: "crea-plus", name: "CREA+", floor: "4F", size: "100㎡", location: "大名エリア" },
-  { id: "crea-daimyo2", name: "CREA大名Ⅱ", floor: "3F", size: "49㎡", location: "大名エリア" },
+  {
+    id: "crea-daimyo",
+    name: "CREA大名",
+    floor: "2F",
+    size: "77㎡",
+    location: "大名エリア",
+  },
+  {
+    id: "crea-plus",
+    name: "CREA+",
+    floor: "4F",
+    size: "100㎡",
+    location: "大名エリア",
+  },
+  {
+    id: "crea-daimyo2",
+    name: "CREA大名Ⅱ",
+    floor: "3F",
+    size: "49㎡",
+    location: "大名エリア",
+  },
 ];
 
 // 時間オプション（06:00〜23:30まで30分刻み）
-const TIME_OPTIONS = Array.from({ length: 36 }, (_, i) => {
-  const hour = Math.floor(i / 2) + 6;
-  const minute = (i % 2) * 30;
-  return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
-});
+// 「日付」を 06:00〜翌05:30（= 48コマ）として扱う（深夜練対応）
+const TIME_OPTIONS = [
+  ...Array.from({ length: 36 }, (_, i) => {
+    const hour = Math.floor(i / 2) + 6;
+    const minute = (i % 2) * 30;
+    return `${hour.toString().padStart(2, "0")}:${minute
+      .toString()
+      .padStart(2, "0")}`;
+  }),
+  ...Array.from({ length: 12 }, (_, i) => {
+    const hour = Math.floor(i / 2);
+    const minute = (i % 2) * 30;
+    return `${hour.toString().padStart(2, "0")}:${minute
+      .toString()
+      .padStart(2, "0")}`;
+  }),
+];
 
 // 今日の日付を取得
 function getTodayDate(): string {
-  const today = new Date();
-  return today.toISOString().split("T")[0];
+  return toLocalDateString(new Date());
+}
+
+function toLocalDateString(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function dateStringToLocalDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatDateLabel(dateStr: string): string {
+  const d = dateStringToLocalDate(dateStr);
+  const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
+  const dayName = dayNames[d.getDay()];
+  return `${d.getMonth() + 1}/${d.getDate()}（${dayName}）`;
 }
 
 // 時間を数値に変換（比較用）
@@ -43,12 +110,18 @@ function timeToMinutes(time: string): number {
   return hours * 60 + minutes;
 }
 
+// 00:00〜05:30 は「翌日」として扱う（比較・フィルタ用）
+function timeToBusinessMinutes(time: string): number {
+  const m = timeToMinutes(time);
+  return m < 6 * 60 ? m + 24 * 60 : m;
+}
+
 // 時間範囲が重なるかチェック
 function isTimeRangeOverlap(
   range1Start: string,
   range1End: string,
   range2Start: string,
-  range2End: string
+  range2End: string,
 ): boolean {
   const r1Start = timeToMinutes(range1Start);
   const r1End = timeToMinutes(range1End);
@@ -64,37 +137,97 @@ interface ApiResponse {
   date: string;
   dayOfWeek: string;
   studios: (AvailabilityResponse | CivicHallResponse | CreaResponse)[];
-  availableStudios: { id: string; name: string; studioCount: number }[];
+  availableStudios: {
+    id: string;
+    name: string;
+    studioCount: number;
+    lateNight?: { start: string; end: string };
+  }[];
+}
+
+interface ApiMultiResponse {
+  dates: {
+    date: string;
+    dayOfWeek: string;
+    studios: (AvailabilityResponse | CivicHallResponse | CreaResponse)[];
+  }[];
+  availableStudios: ApiResponse["availableStudios"];
+}
+
+type AnyApiResponse = ApiResponse | ApiMultiResponse;
+
+function isMultiResponse(data: AnyApiResponse): data is ApiMultiResponse {
+  return "dates" in data;
+}
+
+function daysInMonth(year: number, monthIndex: number): number {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function monthKey(year: number, monthIndex: number): string {
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+}
+
+function toDateString(year: number, monthIndex: number, day: number): string {
+  const y = String(year);
+  const m = String(monthIndex + 1).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 }
 
 export default function Home() {
-  const [selectedStudios, setSelectedStudios] = useState<string[]>(["fukuokahonten"]);
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayDate());
-  const [startTime, setStartTime] = useState<string>("10:00");
-  const [endTime, setEndTime] = useState<string>("22:00");
-  const [data, setData] = useState<ApiResponse | null>(null);
+  const [selectedStudios, setSelectedStudios] = useState<string[]>([
+    "fukuokahonten",
+  ]);
+  const [selectedDates, setSelectedDates] = useState<string[]>([
+    getTodayDate(),
+  ]);
+  const [startTime, setStartTime] = useState<string>("19:00");
+  const [endTime, setEndTime] = useState<string>("21:00");
+  const [data, setData] = useState<AnyApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedLateNight, setSelectedLateNight] = useState<string>();
+  const [lateNightBackupTime, setLateNightBackupTime] = useState<{
+    start: string;
+    end: string;
+  } | null>(null);
 
   // スタジオ選択の切り替え
   const toggleStudio = (studioId: string) => {
-    setSelectedStudios((prev) =>
-      prev.includes(studioId)
+    setSelectedStudios((prev) => {
+      const next = prev.includes(studioId)
         ? prev.filter((id) => id !== studioId)
-        : [...prev, studioId]
-    );
+        : [...prev, studioId];
+      return next;
+    });
+    setSelectedLateNight((prev) => (prev === studioId ? undefined : prev));
   };
+
+  const lateNightByStudioId = useMemo(() => {
+    const map = new Map<string, { start: string; end: string }>();
+    for (const s of data?.availableStudios ?? []) {
+      if (s.lateNight) map.set(s.id, s.lateNight);
+    }
+    return map;
+  }, [data]);
 
   // 時間でフィルタリングされたデータ
   const filteredData = useMemo(() => {
     if (!data) return null;
 
-    const startMinutes = timeToMinutes(startTime);
-    const endMinutes = timeToMinutes(endTime);
+    const startMinutes = timeToBusinessMinutes(startTime);
+    let endMinutes = timeToBusinessMinutes(endTime);
+    // 深夜帯（翌日跨ぎ）の場合、06:00など境界時刻で end が start より小さくなるので補正
+    if (endMinutes < startMinutes) endMinutes += 24 * 60;
+    const selectedRangeCrossesMidnight =
+      timeToMinutes(endTime) < timeToMinutes(startTime) &&
+      timeToMinutes(endTime) <= 6 * 60;
 
-    return {
-      ...data,
-      studios: data.studios.map((studio) => {
+    const filterStudios = (
+      studios: (AvailabilityResponse | CivicHallResponse | CreaResponse)[],
+    ) => {
+      return studios.map((studio) => {
         // CREAの場合は studios プロパティでフィルタリング
         if ("studios" in studio && Array.isArray(studio.studios)) {
           return {
@@ -104,14 +237,16 @@ export default function Home() {
               slots: creaStudio.slots.map((slot) => ({
                 ...slot,
                 timeSlots: slot.timeSlots.filter((ts) => {
-                  const slotMinutes = timeToMinutes(ts.time);
-                  return slotMinutes >= startMinutes && slotMinutes < endMinutes;
+                  const slotMinutes = timeToBusinessMinutes(ts.time);
+                  return (
+                    slotMinutes >= startMinutes && slotMinutes < endMinutes
+                  );
                 }),
               })),
             })),
           };
         }
-        
+
         // 市民会館の場合は時間範囲の重なりでフィルタリング
         if ("rooms" in studio) {
           const civicHallStudio = studio as CivicHallResponse;
@@ -120,27 +255,59 @@ export default function Home() {
             rooms: civicHallStudio.rooms.map((room) => ({
               ...room,
               slots: room.slots.filter((slot) => {
+                // 市民会館は深夜帯が存在しないため、深夜練レンジ（翌日跨ぎ）の場合は表示しない
+                if (selectedRangeCrossesMidnight) return false;
                 // timeRange "9:00-12:30" を "9:00" と "12:30" に分割
                 const [slotStart, slotEnd] = slot.timeRange.split("-");
                 // 指定時間範囲と重なりをチェック
-                return isTimeRangeOverlap(startTime, endTime, slotStart, slotEnd);
+                return isTimeRangeOverlap(
+                  startTime,
+                  endTime,
+                  slotStart,
+                  slotEnd,
+                );
               }),
             })),
           };
         }
-        
+
         // BUZZスタジオの場合は時間フィルタリング
         const buzzStudio = studio as AvailabilityResponse;
         return {
           ...buzzStudio,
           timeSlots: buzzStudio.timeSlots.filter((slot) => {
-            const slotMinutes = timeToMinutes(slot.time);
+            const slotMinutes = timeToBusinessMinutes(slot.time);
             return slotMinutes >= startMinutes && slotMinutes < endMinutes;
           }),
         };
-      }),
+      });
+    };
+    if (isMultiResponse(data)) {
+      return {
+        ...data,
+        dates: data.dates.map((d) => ({
+          ...d,
+          studios: filterStudios(d.studios),
+        })),
+      };
+    }
+    return {
+      ...data,
+      studios: filterStudios(data.studios),
     };
   }, [data, startTime, endTime]);
+
+  const dayResults = useMemo(() => {
+    if (!filteredData) return [];
+    if (isMultiResponse(filteredData)) return filteredData.dates;
+    return [
+      {
+        date: filteredData.date,
+        dayOfWeek: filteredData.dayOfWeek,
+        studios: filteredData.studios,
+      },
+    ];
+  }, [filteredData]);
 
   // データ取得
   const fetchData = async () => {
@@ -148,13 +315,28 @@ export default function Home() {
       setError("スタジオを選択してください");
       return;
     }
+    if (selectedDates.length === 0) {
+      setError("日付を選択してください");
+      return;
+    }
 
     setLoading(true);
     setError(null);
 
     try {
+      const includeLateNight =
+        Boolean(selectedLateNight) ||
+        timeToMinutes(startTime) < 6 * 60 ||
+        timeToMinutes(endTime) < 6 * 60;
+
+      const datesParam = selectedDates
+        .slice()
+        .sort()
+        .map(encodeURIComponent)
+        .join(",");
+
       const response = await fetch(
-        `/api/availability?studios=${selectedStudios.join(",")}&date=${selectedDate}`
+        `/api/availability?studios=${encodeURIComponent(selectedStudios.join(","))}&dates=${datesParam}${includeLateNight ? "&include-late-night=1" : ""}`,
       );
 
       if (!response.ok) {
@@ -175,6 +357,28 @@ export default function Home() {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const selectedDatesSet = useMemo(
+    () => new Set(selectedDates),
+    [selectedDates],
+  );
+
+  const toggleDate = (dateStr: string) => {
+    setSelectedDates((prev) => {
+      const next = new Set(prev);
+      if (next.has(dateStr)) next.delete(dateStr);
+      else next.add(dateStr);
+      return Array.from(next).sort();
+    });
+  };
+
+  const today = useMemo(() => getTodayDate(), []);
+  const [calendarYear, setCalendarYear] = useState<number>(
+    dateStringToLocalDate(today).getFullYear(),
+  );
+  const [calendarMonthIndex, setCalendarMonthIndex] = useState<number>(
+    dateStringToLocalDate(today).getMonth(),
+  );
 
   return (
     <div className="min-h-screen bg-background grid-pattern">
@@ -203,7 +407,8 @@ export default function Home() {
           {/* BUZZスタジオ選択 */}
           <div className="mb-6">
             <label className="block text-sm text-muted mb-3">
-              <span className="text-accent">●</span> BUZZスタジオ（空き状況を表示）
+              <span className="text-accent">●</span>{" "}
+              BUZZスタジオ（空き状況を表示）
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {BUZZ_STUDIOS.map((studio) => (
@@ -262,7 +467,8 @@ export default function Home() {
           {/* 市民会館・ホール系（部屋単位で選択） */}
           <div className="mb-6">
             <label className="block text-sm text-muted mb-3">
-              <span className="text-blue-500">●</span> 福岡市民会館（部屋を個別に選択）
+              <span className="text-blue-500">●</span>{" "}
+              福岡市民会館（部屋を個別に選択）
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {CIVIC_HALL_ROOMS.map((room) => (
@@ -324,7 +530,8 @@ export default function Home() {
           {/* CREAスタジオ選択（スタジオ単位） */}
           <div className="mb-6">
             <label className="block text-sm text-muted mb-3">
-              <span className="text-purple-500">●</span> レンタルスタジオCREA（スタジオを個別に選択）
+              <span className="text-purple-500">●</span>{" "}
+              レンタルスタジオCREA（スタジオを個別に選択）
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {CREA_STUDIOS.map((studio) => (
@@ -373,7 +580,9 @@ export default function Home() {
                   </div>
                   <div>
                     <div className="font-medium text-sm">{studio.name}</div>
-                    <div className="text-xs text-muted">{studio.floor} / {studio.size}</div>
+                    <div className="text-xs text-muted">
+                      {studio.floor} / {studio.size}
+                    </div>
                     <div className="text-xs text-purple-500/70 mt-0.5">
                       {studio.location}
                     </div>
@@ -385,25 +594,33 @@ export default function Home() {
 
           {/* 日付クイック選択 */}
           <div className="mb-4">
-            <label className="block text-sm text-muted mb-2">日付をクイック選択</label>
+            <label className="block text-sm text-muted mb-2">
+              日付をクイック選択（複数選択可）
+            </label>
             <div className="flex flex-wrap gap-2">
               {[0, 1, 2, 3, 4, 5, 6].map((daysFromToday) => {
                 const date = new Date();
                 date.setDate(date.getDate() + daysFromToday);
-                const dateStr = date.toISOString().split("T")[0];
+                const dateStr = toLocalDateString(date);
                 const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
                 const dayName = dayNames[date.getDay()];
-                const label = daysFromToday === 0 ? "今日" : daysFromToday === 1 ? "明日" : `${date.getMonth() + 1}/${date.getDate()}`;
-                
+                const label =
+                  daysFromToday === 0
+                    ? "今日"
+                    : daysFromToday === 1
+                      ? "明日"
+                      : `${date.getMonth() + 1}/${date.getDate()}`;
+
                 return (
                   <button
                     key={dateStr}
-                    onClick={() => setSelectedDate(dateStr)}
+                    onClick={() => toggleDate(dateStr)}
                     className={`
                       px-3 py-2 rounded-lg text-sm font-medium transition-all
-                      ${selectedDate === dateStr
-                        ? "bg-accent text-background"
-                        : "bg-background border border-border hover:border-accent"
+                      ${
+                        selectedDatesSet.has(dateStr)
+                          ? "bg-accent text-background"
+                          : "bg-background border border-border hover:border-accent"
                       }
                     `}
                   >
@@ -418,13 +635,110 @@ export default function Home() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {/* 日付選択（カレンダー） */}
             <div className="lg:col-span-1">
-              <label className="block text-sm text-muted mb-2">日付（カレンダー）</label>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-accent transition-colors"
-              />
+              <label className="block text-sm text-muted mb-2">
+                日付（カレンダー / 複数選択）
+              </label>
+              <div className="bg-background border border-border rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    className="px-2 py-1 rounded border border-border hover:border-accent transition-colors text-sm"
+                    onClick={() => {
+                      const prevMonth = calendarMonthIndex - 1;
+                      if (prevMonth < 0) {
+                        setCalendarMonthIndex(11);
+                        setCalendarYear((y) => y - 1);
+                      } else {
+                        setCalendarMonthIndex(prevMonth);
+                      }
+                    }}
+                    aria-label="前の月"
+                  >
+                    ←
+                  </button>
+                  <div className="text-sm text-muted">
+                    {calendarYear}/
+                    {String(calendarMonthIndex + 1).padStart(2, "0")}
+                  </div>
+                  <button
+                    className="px-2 py-1 rounded border border-border hover:border-accent transition-colors text-sm"
+                    onClick={() => {
+                      const nextMonth = calendarMonthIndex + 1;
+                      if (nextMonth > 11) {
+                        setCalendarMonthIndex(0);
+                        setCalendarYear((y) => y + 1);
+                      } else {
+                        setCalendarMonthIndex(nextMonth);
+                      }
+                    }}
+                    aria-label="次の月"
+                  >
+                    →
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-7 gap-1 text-xs text-muted mb-1">
+                  {["日", "月", "火", "水", "木", "金", "土"].map((w) => (
+                    <div key={w} className="text-center py-1">
+                      {w}
+                    </div>
+                  ))}
+                </div>
+
+                {(() => {
+                  const first = new Date(calendarYear, calendarMonthIndex, 1);
+                  const startWeekday = first.getDay(); // 0..6
+                  const total = daysInMonth(calendarYear, calendarMonthIndex);
+                  const cells: Array<{
+                    key: string;
+                    dateStr?: string;
+                    day?: number;
+                  }> = [];
+
+                  for (let i = 0; i < startWeekday; i++) {
+                    cells.push({
+                      key: `empty-${i}-${monthKey(calendarYear, calendarMonthIndex)}`,
+                    });
+                  }
+                  for (let day = 1; day <= total; day++) {
+                    const dateStr = toDateString(
+                      calendarYear,
+                      calendarMonthIndex,
+                      day,
+                    );
+                    cells.push({ key: dateStr, dateStr, day });
+                  }
+
+                  return (
+                    <div className="grid grid-cols-7 gap-1">
+                      {cells.map((c) => {
+                        if (!c.dateStr || !c.day) {
+                          return <div key={c.key} className="h-8" />;
+                        }
+                        const selected = selectedDatesSet.has(c.dateStr);
+                        const isToday = c.dateStr === today;
+                        return (
+                          <button
+                            key={c.key}
+                            onClick={() => toggleDate(c.dateStr!)}
+                            className={`
+                              h-8 rounded-md text-sm transition-all border
+                              ${
+                                selected
+                                  ? "bg-accent text-background border-accent"
+                                  : "bg-background text-foreground border-border hover:border-accent"
+                              }
+                              ${isToday && !selected ? "border-accent/60" : ""}
+                            `}
+                            title={formatDateLabel(c.dateStr)}
+                          >
+                            {c.day}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* 開始時間 */}
@@ -432,8 +746,11 @@ export default function Home() {
               <label className="block text-sm text-muted mb-2">開始時間</label>
               <select
                 value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-accent transition-colors appearance-none cursor-pointer"
+                onChange={(e) => {
+                  setStartTime(e.target.value);
+                  setSelectedLateNight(undefined);
+                }}
+                className={`w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-accent transition-colors appearance-none cursor-pointer ${selectedLateNight ? "opacity-60" : ""}`}
               >
                 {TIME_OPTIONS.map((time) => (
                   <option key={time} value={time}>
@@ -448,8 +765,11 @@ export default function Home() {
               <label className="block text-sm text-muted mb-2">終了時間</label>
               <select
                 value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-accent transition-colors appearance-none cursor-pointer"
+                onChange={(e) => {
+                  setEndTime(e.target.value);
+                  setSelectedLateNight(undefined);
+                }}
+                className={`w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-accent transition-colors appearance-none cursor-pointer ${selectedLateNight ? "opacity-60" : ""}`}
               >
                 {TIME_OPTIONS.map((time) => (
                   <option key={time} value={time}>
@@ -457,6 +777,90 @@ export default function Home() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm text-muted mb-2">深夜練</label>
+              <div className="flex flex-wrap gap-2">
+                {(() => {
+                  const eligible = selectedStudios.filter((id) =>
+                    lateNightByStudioId.has(id),
+                  );
+                  const canUse = eligible.length > 0;
+                  const active = Boolean(selectedLateNight);
+
+                  return (
+                    <button
+                      onClick={() => {
+                        if (!canUse) return;
+
+                        // 2回目押下: 深夜練を解除して、押す前の時間に戻す
+                        if (active) {
+                          if (lateNightBackupTime) {
+                            setStartTime(lateNightBackupTime.start);
+                            setEndTime(lateNightBackupTime.end);
+                          }
+                          setSelectedLateNight(undefined);
+                          setLateNightBackupTime(null);
+                          return;
+                        }
+
+                        // 1回目押下: 現在の時間を退避してから深夜練時間に切り替える
+                        setLateNightBackupTime({
+                          start: startTime,
+                          end: endTime,
+                        });
+
+                        const idToUse =
+                          (selectedLateNight &&
+                          eligible.includes(selectedLateNight)
+                            ? selectedLateNight
+                            : eligible[0]) ?? eligible[0];
+                        const range = idToUse
+                          ? lateNightByStudioId.get(idToUse)
+                          : undefined;
+                        if (!idToUse || !range) return;
+
+                        setSelectedLateNight(idToUse);
+                        setStartTime(range.start);
+                        setEndTime(range.end);
+                      }}
+                      disabled={!canUse}
+                      className={`
+                        px-4 py-3 rounded-lg font-medium transition-all
+                        ${
+                          !canUse
+                            ? "bg-muted/20 text-muted cursor-not-allowed"
+                            : active
+                              ? "bg-accent text-background"
+                              : "bg-background border border-border text-foreground hover:border-accent focus:outline-none focus:border-accent"
+                        }
+                      `}
+                    >
+                      深夜練
+                    </button>
+                  );
+                })()}
+                {selectedStudios.filter((id) => lateNightByStudioId.has(id))
+                  .length === 0 && (
+                  <span className="text-xs text-muted">
+                    （深夜に予約できません）
+                  </span>
+                )}
+              </div>
+              {selectedLateNight &&
+                lateNightByStudioId.get(selectedLateNight) && (
+                  <div className="mt-2 text-xs text-muted">
+                    深夜練:{" "}
+                    <span className="text-accent font-mono">
+                      {lateNightByStudioId.get(selectedLateNight)!.start}
+                    </span>
+                    {" 〜 "}
+                    <span className="text-accent font-mono">
+                      {lateNightByStudioId.get(selectedLateNight)!.end}
+                    </span>
+                  </div>
+                )}
             </div>
 
             {/* 検索ボタン */}
@@ -506,7 +910,8 @@ export default function Home() {
           {/* 時間範囲の表示 */}
           {startTime && endTime && (
             <div className="mt-4 text-sm text-muted">
-              表示時間帯: <span className="text-accent font-mono">{startTime}</span>
+              表示時間帯:{" "}
+              <span className="text-accent font-mono">{startTime}</span>
               {" 〜 "}
               <span className="text-accent font-mono">{endTime}</span>
             </div>
@@ -536,83 +941,133 @@ export default function Home() {
             </div>
 
             {/* 各スタジオの結果 */}
-            {filteredData.studios.map((studio, studioIndex) => {
-              // 型ガード
-              const isCivicHall = "rooms" in studio;
-              const isCrea = "studios" in studio && Array.isArray((studio as CreaResponse).studios);
+            {dayResults.map((day) => (
+              <div key={day.date} className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold">
+                    {day.date}（{day.dayOfWeek}）
+                  </h3>
+                  <button
+                    onClick={() => toggleDate(day.date)}
+                    className="text-xs px-3 py-2 rounded-lg border border-border hover:border-accent transition-colors"
+                    title="この日付を選択解除"
+                  >
+                    選択解除
+                  </button>
+                </div>
 
-              return (
-                <div
-                  key={studio.studioId}
-                  className="bg-card border border-border rounded-lg overflow-hidden animate-fade-in"
-                  style={{ animationDelay: `${studioIndex * 100}ms` }}
-                >
-                  {/* スタジオヘッダー */}
-                  <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-                    <div>
-                      <h3 className="font-bold text-lg">{studio.studioName}</h3>
-                      <p className="text-sm text-muted">
-                        {studio.date}（{studio.dayOfWeek}）
-                      </p>
-                    </div>
-                    {studio.error && (
-                      <span className="text-danger text-sm">{studio.error}</span>
-                    )}
-                  </div>
+                {(day.studios ?? []).map((studio, studioIndex) => {
+                  // 型ガード
+                  const isCivicHall = "rooms" in studio;
+                  const isCrea =
+                    "studios" in studio &&
+                    Array.isArray((studio as CreaResponse).studios);
 
-                  {/* CREAスタジオ系の表示 */}
-                  {isCrea ? (
-                    <div className="p-6">
-                      {(studio as CreaResponse).studios && (studio as CreaResponse).studios.length > 0 ? (
-                        <div className="space-y-6">
-                          {(studio as CreaResponse).studios.map((creaStudio) => (
-                            <div key={creaStudio.studioId} className="border border-border rounded-lg overflow-hidden">
-                              <div className="bg-purple-500/10 px-4 py-3 border-b border-border">
-                                <h4 className="font-semibold text-sm text-purple-400">
-                                  {creaStudio.studioName}
-                                  <span className="text-muted font-normal ml-2">
-                                    {creaStudio.floor} / {creaStudio.size}
-                                  </span>
-                                </h4>
-                              </div>
-                              {creaStudio.slots.map((slot) => (
-                                <div key={slot.slotType} className="border-b border-border last:border-b-0">
-                                  <div className="bg-card-hover px-4 py-2 border-b border-border flex items-center justify-between">
-                                    <h5 className="font-medium text-sm">
-                                      {slot.slotName}
-                                      <span className="text-muted font-normal ml-2 text-xs">
-                                        ({slot.hours})
-                                      </span>
-                                    </h5>
-                                    <span className="text-purple-400 text-sm font-mono">
-                                      ¥{slot.price.toLocaleString()}
-                                    </span>
-                                  </div>
-                                  <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                      <thead>
-                                        <tr className="border-b border-border">
-                                          <th className="px-4 py-3 text-left text-muted font-medium">
-                                            時間帯
-                                          </th>
-                                          <th className="px-4 py-3 text-center text-muted font-medium">
-                                            状況
-                                          </th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {slot.timeSlots.length > 0 ? (
-                                          slot.timeSlots.map((ts) => (
-                                            <tr
-                                              key={ts.time}
-                                              className="border-b border-border/50 hover:bg-card-hover transition-colors"
-                                            >
-                                              <td className="px-4 py-3 font-mono text-muted">
-                                                {ts.time}〜
-                                              </td>
-                                              <td className="px-4 py-3 text-center">
-                                                <div
-                                                  className={`
+                  return (
+                    <div
+                      key={`${day.date}-${studio.studioId}`}
+                      className="bg-card border border-border rounded-lg overflow-hidden animate-fade-in"
+                      style={{ animationDelay: `${studioIndex * 60}ms` }}
+                    >
+                      {/* スタジオヘッダー */}
+                      <div className="border-b border-border px-6 py-4 flex items-center justify-between">
+                        <div>
+                          <h4 className="font-bold text-lg">
+                            {studio.studioName}
+                          </h4>
+                          <p className="text-sm text-muted">
+                            {studio.date}（{studio.dayOfWeek}）
+                          </p>
+                          {lateNightByStudioId.get(studio.studioId) && (
+                            <p className="text-xs text-muted mt-1">
+                              深夜練:{" "}
+                              <span className="font-mono">
+                                {
+                                  lateNightByStudioId.get(studio.studioId)!
+                                    .start
+                                }
+                              </span>
+                              {" 〜 "}
+                              <span className="font-mono">
+                                {lateNightByStudioId.get(studio.studioId)!.end}
+                              </span>
+                            </p>
+                          )}
+                          {selectedLateNight &&
+                            !lateNightByStudioId.get(studio.studioId) && (
+                              <p className="text-xs text-danger mt-1">
+                                深夜に予約はできません
+                              </p>
+                            )}
+                        </div>
+                        {studio.error && (
+                          <span className="text-danger text-sm">
+                            {studio.error}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* CREAスタジオ系の表示 */}
+                      {isCrea ? (
+                        <div className="p-6">
+                          {(studio as CreaResponse).studios &&
+                          (studio as CreaResponse).studios.length > 0 ? (
+                            <div className="space-y-6">
+                              {(studio as CreaResponse).studios.map(
+                                (creaStudio) => (
+                                  <div
+                                    key={creaStudio.studioId}
+                                    className="border border-border rounded-lg overflow-hidden"
+                                  >
+                                    <div className="bg-purple-500/10 px-4 py-3 border-b border-border">
+                                      <h5 className="font-semibold text-sm text-purple-400">
+                                        {creaStudio.studioName}
+                                        <span className="text-muted font-normal ml-2">
+                                          {creaStudio.floor} / {creaStudio.size}
+                                        </span>
+                                      </h5>
+                                    </div>
+                                    {creaStudio.slots.map((slot) => (
+                                      <div
+                                        key={slot.slotType}
+                                        className="border-b border-border last:border-b-0"
+                                      >
+                                        <div className="bg-card-hover px-4 py-2 border-b border-border flex items-center justify-between">
+                                          <h6 className="font-medium text-sm">
+                                            {slot.slotName}
+                                            <span className="text-muted font-normal ml-2 text-xs">
+                                              ({slot.hours})
+                                            </span>
+                                          </h6>
+                                          <span className="text-purple-400 text-sm font-mono">
+                                            ¥{slot.price.toLocaleString()}
+                                          </span>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                          <table className="w-full text-sm">
+                                            <thead>
+                                              <tr className="border-b border-border">
+                                                <th className="px-4 py-3 text-left text-muted font-medium">
+                                                  時間帯
+                                                </th>
+                                                <th className="px-4 py-3 text-center text-muted font-medium">
+                                                  状況
+                                                </th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {slot.timeSlots.length > 0 ? (
+                                                slot.timeSlots.map((ts) => (
+                                                  <tr
+                                                    key={ts.time}
+                                                    className="border-b border-border/50 hover:bg-card-hover transition-colors"
+                                                  >
+                                                    <td className="px-4 py-3 font-mono text-muted">
+                                                      {ts.time}〜
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center">
+                                                      <div
+                                                        className={`
                                                     inline-flex items-center justify-center w-12 h-8 rounded-md transition-all
                                                     ${
                                                       ts.available
@@ -620,163 +1075,194 @@ export default function Home() {
                                                         : "bg-danger/20 border border-danger/40"
                                                     }
                                                   `}
-                                                  title={ts.available ? "空き" : "予約済み"}
-                                                >
-                                                  <span
-                                                    className={`
+                                                        title={
+                                                          ts.available
+                                                            ? "空き"
+                                                            : "予約済み"
+                                                        }
+                                                      >
+                                                        <span
+                                                          className={`
                                                       text-sm
                                                       ${ts.available ? "text-accent" : "text-danger/60"}
                                                     `}
+                                                        >
+                                                          {ts.available
+                                                            ? "○"
+                                                            : "×"}
+                                                        </span>
+                                                      </div>
+                                                    </td>
+                                                  </tr>
+                                                ))
+                                              ) : (
+                                                <tr>
+                                                  <td
+                                                    colSpan={2}
+                                                    className="px-4 py-4 text-center text-muted"
                                                   >
-                                                    {ts.available ? "○" : "×"}
-                                                  </span>
-                                                </div>
-                                              </td>
-                                            </tr>
-                                          ))
-                                        ) : (
-                                          <tr>
-                                            <td colSpan={2} className="px-4 py-4 text-center text-muted">
-                                              この時間帯のデータがありません
-                                            </td>
-                                          </tr>
-                                        )}
-                                      </tbody>
-                                    </table>
+                                                    この時間帯のデータがありません
+                                                  </td>
+                                                </tr>
+                                              )}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </div>
+                                    ))}
+                                    {creaStudio.slots.length === 0 && (
+                                      <div className="text-center text-muted text-sm py-4">
+                                        指定した時間帯に空きがありません
+                                      </div>
+                                    )}
                                   </div>
-                                </div>
-                              ))}
-                              {creaStudio.slots.length === 0 && (
-                                <div className="text-center text-muted text-sm py-4">
-                                  指定した時間帯に空きがありません
-                                </div>
+                                ),
                               )}
                             </div>
-                          ))}
+                          ) : (
+                            <div className="p-8 text-center text-muted">
+                              データがありません
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div className="p-8 text-center text-muted">
-                          データがありません
-                        </div>
-                      )}
-                    </div>
-                  ) : isCivicHall ? (
-                    /* 市民会館系の表示 */
-                    <div className="p-6">
-                      {(studio as CivicHallResponse).rooms && (studio as CivicHallResponse).rooms.length > 0 ? (
-                        <div className="space-y-6">
-                          {(studio as CivicHallResponse).rooms.map((room) => (
-                            <div key={room.roomName} className="border border-border rounded-lg overflow-hidden">
-                              <div className="bg-card-hover px-4 py-2 border-b border-border">
-                                <h4 className="font-semibold text-sm">{room.roomName}</h4>
-                              </div>
-                              <div className="overflow-x-auto">
-                                <table className="w-full text-sm">
-                                  <thead>
-                                    <tr className="border-b border-border">
-                                      <th className="px-4 py-3 text-left text-muted font-medium">
-                                        時間帯
-                                      </th>
-                                      <th className="px-4 py-3 text-center text-muted font-medium">
-                                        状況
-                                      </th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {room.slots.map((slot) => (
-                                      <tr
-                                        key={`${slot.slotId}-${slot.timeRange}`}
-                                        className="border-b border-border/50 hover:bg-card-hover transition-colors"
-                                      >
-                                        <td className="px-4 py-3 font-mono text-muted">
-                                          {slot.timeRange}
-                                        </td>
-                                        <td className="px-4 py-3 text-center">
-                                          <div
-                                            className={`
+                      ) : isCivicHall ? (
+                        /* 市民会館系の表示 */
+                        <div className="p-6">
+                          {(studio as CivicHallResponse).rooms &&
+                          (studio as CivicHallResponse).rooms.length > 0 ? (
+                            <div className="space-y-6">
+                              {(studio as CivicHallResponse).rooms.map(
+                                (room) => (
+                                  <div
+                                    key={room.roomName}
+                                    className="border border-border rounded-lg overflow-hidden"
+                                  >
+                                    <div className="bg-card-hover px-4 py-2 border-b border-border">
+                                      <h5 className="font-semibold text-sm">
+                                        {room.roomName}
+                                      </h5>
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-sm">
+                                        <thead>
+                                          <tr className="border-b border-border">
+                                            <th className="px-4 py-3 text-left text-muted font-medium">
+                                              時間帯
+                                            </th>
+                                            <th className="px-4 py-3 text-center text-muted font-medium">
+                                              状況
+                                            </th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {room.slots.map((slot) => (
+                                            <tr
+                                              key={`${slot.slotId}-${slot.timeRange}`}
+                                              className="border-b border-border/50 hover:bg-card-hover transition-colors"
+                                            >
+                                              <td className="px-4 py-3 font-mono text-muted">
+                                                {slot.timeRange}
+                                              </td>
+                                              <td className="px-4 py-3 text-center">
+                                                <div
+                                                  className={`
                                               inline-flex items-center justify-center w-12 h-8 rounded-md transition-all
                                               ${
                                                 slot.status === "○"
                                                   ? "bg-accent/20 border border-accent/40"
                                                   : slot.status === "●"
-                                                  ? "bg-accent/20 border border-accent/40"
-                                                  : slot.status === "×"
-                                                  ? "bg-danger/20 border border-danger/40"
-                                                  : "bg-muted/10 border border-muted/20"
+                                                    ? "bg-accent/20 border border-accent/40"
+                                                    : slot.status === "×"
+                                                      ? "bg-danger/20 border border-danger/40"
+                                                      : "bg-muted/10 border border-muted/20"
                                               }
                                             `}
-                                            title={
-                                              slot.status === "○" || slot.status === "●"
-                                                ? "空き"
-                                                : slot.status === "×"
-                                                ? "予約済み"
-                                                : "受付期間外"
-                                            }
-                                          >
-                                            <span
-                                              className={`
+                                                  title={
+                                                    slot.status === "○" ||
+                                                    slot.status === "●"
+                                                      ? "空き"
+                                                      : slot.status === "×"
+                                                        ? "予約済み"
+                                                        : "受付期間外"
+                                                  }
+                                                >
+                                                  <span
+                                                    className={`
                                                 text-sm
                                                 ${
-                                                  slot.status === "○" || slot.status === "●"
+                                                  slot.status === "○" ||
+                                                  slot.status === "●"
                                                     ? "text-accent"
                                                     : slot.status === "×"
-                                                    ? "text-danger/60"
-                                                    : "text-muted"
+                                                      ? "text-danger/60"
+                                                      : "text-muted"
                                                 }
                                               `}
-                                            >
-                                              {slot.status}
-                                            </span>
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
+                                                  >
+                                                    {slot.status}
+                                                  </span>
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                ),
+                              )}
                             </div>
-                          ))}
+                          ) : (
+                            <div className="p-8 text-center text-muted">
+                              データがありません
+                            </div>
+                          )}
                         </div>
                       ) : (
-                        <div className="p-8 text-center text-muted">
-                          データがありません
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* BUZZスタジオ系の表示 */
-                    <>
-                      {(studio as AvailabilityResponse).timeSlots && (studio as AvailabilityResponse).timeSlots.length > 0 ? (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b border-border">
-                                <th className="px-4 py-3 text-left text-muted font-medium sticky left-0 bg-card">
-                                  時間
-                                </th>
-                                {(studio as AvailabilityResponse).timeSlots[0]?.studios.map((_, idx) => (
-                                  <th
-                                    key={idx}
-                                    className="px-2 py-3 text-center text-muted font-medium min-w-[50px]"
-                                  >
-                                    {idx + 1}st
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(studio as AvailabilityResponse).timeSlots.map((slot) => (
-                                <tr
-                                  key={slot.time}
-                                  className="border-b border-border/50 hover:bg-card-hover transition-colors"
-                                >
-                                  <td className="px-4 py-2 font-mono text-muted sticky left-0 bg-card">
-                                    {slot.time}
-                                  </td>
-                                  {slot.studios.map((s, idx) => (
-                                    <td key={idx} className="px-2 py-2 text-center">
-                                      <div
-                                        className={`
+                        /* BUZZスタジオ系の表示 */
+                        <>
+                          {(studio as AvailabilityResponse).timeSlots &&
+                          (studio as AvailabilityResponse).timeSlots.length >
+                            0 ? (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="border-b border-border">
+                                    <th className="px-4 py-3 text-left text-muted font-medium sticky left-0 bg-card">
+                                      時間
+                                    </th>
+                                    {(
+                                      studio as AvailabilityResponse
+                                    ).timeSlots[0]?.studios.map((_, idx) => (
+                                      <th
+                                        key={idx}
+                                        className="px-2 py-3 text-center text-muted font-medium min-w-[50px]"
+                                      >
+                                        {idx + 1}st
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(
+                                    studio as AvailabilityResponse
+                                  ).timeSlots.map((slot) => (
+                                    <tr
+                                      key={slot.time}
+                                      className="border-b border-border/50 hover:bg-card-hover transition-colors"
+                                    >
+                                      <td className="px-4 py-2 font-mono text-muted sticky left-0 bg-card">
+                                        {slot.time === "23:30"
+                                          ? "深夜練"
+                                          : slot.time}
+                                      </td>
+                                      {slot.studios.map((s, idx) => (
+                                        <td
+                                          key={idx}
+                                          className="px-2 py-2 text-center"
+                                        >
+                                          <div
+                                            className={`
                                           w-8 h-8 mx-auto rounded-md flex items-center justify-center transition-all
                                           ${
                                             s.isAvailable
@@ -784,31 +1270,41 @@ export default function Home() {
                                               : "bg-danger/20 border border-danger/40"
                                           }
                                         `}
-                                        title={s.isAvailable ? "空き" : "予約済み"}
-                                      >
-                                        {s.isAvailable ? (
-                                          <span className="text-accent text-xs">○</span>
-                                        ) : (
-                                          <span className="text-danger/60 text-xs">×</span>
-                                        )}
-                                      </div>
-                                    </td>
+                                            title={
+                                              s.isAvailable
+                                                ? "空き"
+                                                : "予約済み"
+                                            }
+                                          >
+                                            {s.isAvailable ? (
+                                              <span className="text-accent text-xs">
+                                                ○
+                                              </span>
+                                            ) : (
+                                              <span className="text-danger/60 text-xs">
+                                                ×
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                      ))}
+                                    </tr>
                                   ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="p-8 text-center text-muted">
-                          指定した時間帯にデータがありません
-                        </div>
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <div className="p-8 text-center text-muted">
+                              指定した時間帯にデータがありません
+                            </div>
+                          )}
+                        </>
                       )}
-                    </>
-                  )}
-                </div>
-              );
-            })}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         )}
 
