@@ -483,7 +483,7 @@ export default function Home() {
           className="bg-card border border-border rounded-lg p-6 mb-8 animate-fade-in"
         >
           <h2 className="text-sm font-semibold text-muted mb-4 uppercase tracking-wider">
-            {"//"} 検索条件
+            検索条件
           </h2>
 
           {/* BUZZスタジオ選択 */}
@@ -1059,8 +1059,9 @@ export default function Home() {
                               const href =
                                 info?.type === "crea-studio" &&
                                 "studios" in studio
-                                  ? buildCreaDetailUrl(studio as CreaResponse) ??
-                                    info?.url
+                                  ? (buildCreaDetailUrl(
+                                      studio as CreaResponse,
+                                    ) ?? info?.url)
                                   : info?.url;
                               if (!href) return studio.studioName;
                               return (
