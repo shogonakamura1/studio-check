@@ -42,6 +42,7 @@ for (const [studioId, studio] of Object.entries(CREA_STUDIOS)) {
 export interface CreaTimeSlot {
   time: string;
   available: boolean;
+  bookingUrl?: string;
 }
 
 export interface CreaSlotAvailability {
@@ -182,6 +183,12 @@ function formatTime(unixTimestamp: number): string {
   const hours = date.getHours().toString().padStart(2, "0");
   const minutes = date.getMinutes().toString().padStart(2, "0");
   return `${hours}:${minutes}`;
+}
+
+function toAbsoluteCoubicUrl(maybeRelativeUrl: string): string {
+  if (/^https?:\/\//i.test(maybeRelativeUrl)) return maybeRelativeUrl;
+  // booking_url は "/rentalstudiocrea/802390?selected_slot=..." のような相対パス
+  return `https://coubic.com${maybeRelativeUrl.startsWith("/") ? "" : "/"}${maybeRelativeUrl}`;
 }
 
 /**
@@ -348,16 +355,21 @@ export async function scrapeCrea(
       
       // 予約可能かどうか
       const available = event.reservable && !event.full;
+      const bookingUrl = event.booking_url
+        ? toAbsoluteCoubicUrl(event.booking_url)
+        : undefined;
       
       // 既存の時間スロットを更新
       const existingSlot = group.times.find(ts => ts.time === time);
       if (existingSlot) {
         existingSlot.available = available;
+        if (bookingUrl) existingSlot.bookingUrl = bookingUrl;
       } else {
         // 範囲外の時間の場合は追加
         group.times.push({
           time,
           available,
+          bookingUrl,
         });
       }
     }

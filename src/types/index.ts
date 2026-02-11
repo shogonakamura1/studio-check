@@ -60,6 +60,12 @@ export interface CreaResponse {
       timeSlots: Array<{
         time: string;
         available: boolean;
+        /**
+         * 予約ページURL（COUBICの booking_url を絶対URL化したもの）
+         * - 取得できない時間帯は undefined
+         * - UI側では available === true のときのみ利用する想定
+         */
+        bookingUrl?: string;
       }>;
     }>;
     error?: string;
