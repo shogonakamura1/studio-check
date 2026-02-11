@@ -16,21 +16,37 @@ import { scrapeCrea, type CreaStudioAvailability } from "@/lib/scrapers/crea";
 type LateNightRange = { start: string; end: string };
 
 // スタジオ情報のマスターデータ
-const STUDIO_DATA: Record<string, { name: string; url: string; studioCount: number; type?: string }> = {
+const STUDIO_DATA: Record<
+  string,
+  {
+    name: string;
+    url: string;
+    studioCount: number;
+    type?: string;
+    /**
+     * BUZZの「部屋（1st,2st...）」に対応する数値ID（URLの /{store}/{id}/... の {id} 部分）
+     * UI側で studioNumber(1-index) -> buzzStudioIds[studioNumber-1] に変換する。
+     */
+    buzzStudioIds?: number[];
+  }
+> = {
   fukuokahonten: {
     name: "BUZZ福岡本店",
     url: "https://buzz-st.com/fukuokahonten",
     studioCount: 12,
+    buzzStudioIds: [289, 290, 291, 292, 293, 294, 295, 296, 298, 299, 300, 301],
   },
   fukuokatenjin: {
     name: "BUZZ福岡天神",
     url: "https://buzz-st.com/fukuokatenjin",
-    studioCount: 6,
+    studioCount: 3,
+    buzzStudioIds: [166, 167, 168],
   },
   fukuokahakata: {
     name: "BUZZ福岡博多",
     url: "https://buzz-st.com/fukuokahakata",
-    studioCount: 6,
+    studioCount: 3,
+    buzzStudioIds: [195, 196, 197],
   },
   // 市民会館（部屋単位）
   "civichall-rehearsal": {
@@ -411,6 +427,9 @@ export async function GET(request: NextRequest) {
       name: info.name,
       studioCount: info.studioCount,
       lateNight: LATE_NIGHT_RANGES[id],
+      url: info.url,
+      type: info.type,
+      buzzStudioIds: info.buzzStudioIds,
     }));
 
     // 複数日付は「日付ごとに」スタジオを並列、日付自体は直列（過負荷回避）

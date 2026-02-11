@@ -116,6 +116,71 @@ function timeToBusinessMinutes(time: string): number {
   return m < 6 * 60 ? m + 24 * 60 : m;
 }
 
+function openInNewTab(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function parseBuzzStoreSlug(storeUrl: string): string | null {
+  try {
+    const u = new URL(storeUrl);
+    const slug = u.pathname.split("/").filter(Boolean)[0];
+    return slug || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildBuzzBookingUrl(
+  info: { url: string; buzzStudioIds?: number[] } | undefined,
+  studioNumber: number,
+  date: string,
+): string | null {
+  if (!info?.buzzStudioIds) return null;
+  const buzzStudioId = info.buzzStudioIds[studioNumber - 1];
+  if (!buzzStudioId) return null;
+  const slug = parseBuzzStoreSlug(info.url);
+  if (!slug) return null;
+  return `https://buzz-st.com/${slug}/${buzzStudioId}/${date}#time_table`;
+}
+
+function buildBuzzRoomDetailUrl(
+  info: { url: string; buzzStudioIds?: number[] } | undefined,
+  studioNumber: number,
+): string | null {
+  if (!info?.buzzStudioIds) return null;
+  const buzzStudioId = info.buzzStudioIds[studioNumber - 1];
+  if (!buzzStudioId) return null;
+  const slug = parseBuzzStoreSlug(info.url);
+  if (!slug) return null;
+  return `https://buzz-st.com/${slug}/${buzzStudioId}`;
+}
+
+function buildCivicHallDateUrl(date: string): string {
+  const [year, month, day] = date.split("-");
+  const useYM = `${year}${month}`;
+  const useDay = String(parseInt(day, 10));
+  const useDate = `${year}${month}${day}`;
+  return `https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php?op=srch_sst&UseYM=${useYM}&UseDay=${useDay}&UseDate=${useDate}&ShisetsuCode=001`;
+}
+
+function buildCreaDetailUrl(studio: CreaResponse): string | null {
+  // COUBICの詳細ページ: /rentalstudiocrea/{public_id}#pageContent
+  // 表示中のスロット群から、まず「今表示されているもの」を優先して選ぶ。
+  const preferredOrder = ["平日昼", "平日夜", "平日夜・土日", "土日", "朝活"];
+
+  const allSlots = (studio.studios ?? []).flatMap((s) => s.slots ?? []);
+  if (allSlots.length === 0) return null;
+
+  const pick =
+    preferredOrder
+      .map((name) => allSlots.find((s) => s.slotName === name))
+      .find(Boolean) ?? allSlots[0];
+
+  const publicId = pick?.slotType;
+  if (!publicId || !/^\d+$/.test(publicId)) return null;
+  return `https://coubic.com/rentalstudiocrea/${publicId}#pageContent`;
+}
+
 // 時間範囲が重なるかチェック
 function isTimeRangeOverlap(
   range1Start: string,
@@ -142,6 +207,9 @@ interface ApiResponse {
     name: string;
     studioCount: number;
     lateNight?: { start: string; end: string };
+    url: string;
+    type?: string;
+    buzzStudioIds?: number[];
   }[];
 }
 
@@ -212,6 +280,14 @@ export default function Home() {
     return map;
   }, [data]);
 
+  const studioInfoById = useMemo(() => {
+    const map = new Map<string, ApiResponse["availableStudios"][number]>();
+    for (const s of data?.availableStudios ?? []) {
+      map.set(s.id, s);
+    }
+    return map;
+  }, [data]);
+
   // 時間でフィルタリングされたデータ
   const filteredData = useMemo(() => {
     if (!data) return null;
@@ -234,15 +310,18 @@ export default function Home() {
             ...studio,
             studios: studio.studios.map((creaStudio) => ({
               ...creaStudio,
-              slots: creaStudio.slots.map((slot) => ({
-                ...slot,
-                timeSlots: slot.timeSlots.filter((ts) => {
-                  const slotMinutes = timeToBusinessMinutes(ts.time);
-                  return (
-                    slotMinutes >= startMinutes && slotMinutes < endMinutes
-                  );
-                }),
-              })),
+              slots: creaStudio.slots
+                .map((slot) => ({
+                  ...slot,
+                  timeSlots: slot.timeSlots.filter((ts) => {
+                    const slotMinutes = timeToBusinessMinutes(ts.time);
+                    return (
+                      slotMinutes >= startMinutes && slotMinutes < endMinutes
+                    );
+                  }),
+                }))
+                // 指定時間帯に該当する枠がないスロット（朝活/平日昼など）は表示しない
+                .filter((slot) => slot.timeSlots.length > 0),
             })),
           };
         }
@@ -399,7 +478,10 @@ export default function Home() {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* コントロールパネル */}
-        <div className="bg-card border border-border rounded-lg p-6 mb-8 animate-fade-in">
+        <div
+          id="search-controls"
+          className="bg-card border border-border rounded-lg p-6 mb-8 animate-fade-in"
+        >
           <h2 className="text-sm font-semibold text-muted mb-4 uppercase tracking-wider">
             {"//"} 検索条件
           </h2>
@@ -939,6 +1021,12 @@ export default function Home() {
                 <span className="text-muted">予約済み</span>
               </div>
             </div>
+            <div className="mt-2 text-sm text-danger">
+              <li>○ボタンを押すと直接予約ページに飛びます。</li>
+              <li>
+                各スタジオや部屋の名前を押すと、その詳細ページに移動します。
+              </li>
+            </div>
 
             {/* 各スタジオの結果 */}
             {dayResults.map((day) => (
@@ -947,13 +1035,6 @@ export default function Home() {
                   <h3 className="text-lg font-bold">
                     {day.date}（{day.dayOfWeek}）
                   </h3>
-                  <button
-                    onClick={() => toggleDate(day.date)}
-                    className="text-xs px-3 py-2 rounded-lg border border-border hover:border-accent transition-colors"
-                    title="この日付を選択解除"
-                  >
-                    選択解除
-                  </button>
                 </div>
 
                 {(day.studios ?? []).map((studio, studioIndex) => {
@@ -973,26 +1054,31 @@ export default function Home() {
                       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
                         <div>
                           <h4 className="font-bold text-lg">
-                            {studio.studioName}
+                            {(() => {
+                              const info = studioInfoById.get(studio.studioId);
+                              const href =
+                                info?.type === "crea-studio" &&
+                                "studios" in studio
+                                  ? buildCreaDetailUrl(studio as CreaResponse) ??
+                                    info?.url
+                                  : info?.url;
+                              if (!href) return studio.studioName;
+                              return (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="hover:underline"
+                                  title="スタジオ詳細ページを開く"
+                                >
+                                  {studio.studioName}
+                                </a>
+                              );
+                            })()}
                           </h4>
                           <p className="text-sm text-muted">
                             {studio.date}（{studio.dayOfWeek}）
                           </p>
-                          {lateNightByStudioId.get(studio.studioId) && (
-                            <p className="text-xs text-muted mt-1">
-                              深夜練:{" "}
-                              <span className="font-mono">
-                                {
-                                  lateNightByStudioId.get(studio.studioId)!
-                                    .start
-                                }
-                              </span>
-                              {" 〜 "}
-                              <span className="font-mono">
-                                {lateNightByStudioId.get(studio.studioId)!.end}
-                              </span>
-                            </p>
-                          )}
                           {selectedLateNight &&
                             !lateNightByStudioId.get(studio.studioId) && (
                               <p className="text-xs text-danger mt-1">
@@ -1066,32 +1152,67 @@ export default function Home() {
                                                       {ts.time}〜
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
-                                                      <div
-                                                        className={`
+                                                      {(() => {
+                                                        const canBook =
+                                                          ts.available &&
+                                                          Boolean(
+                                                            ts.bookingUrl,
+                                                          );
+                                                        const bookingUrl =
+                                                          ts.bookingUrl;
+                                                        return (
+                                                          <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                              if (
+                                                                bookingUrl &&
+                                                                canBook
+                                                              ) {
+                                                                openInNewTab(
+                                                                  bookingUrl,
+                                                                );
+                                                              }
+                                                            }}
+                                                            disabled={!canBook}
+                                                            className={`
                                                     inline-flex items-center justify-center w-12 h-8 rounded-md transition-all
                                                     ${
                                                       ts.available
                                                         ? "bg-accent/20 border border-accent/40"
                                                         : "bg-danger/20 border border-danger/40"
                                                     }
+                                                    ${
+                                                      canBook
+                                                        ? "cursor-pointer hover:brightness-110"
+                                                        : "cursor-default"
+                                                    }
+                                                    disabled:opacity-100
                                                   `}
-                                                        title={
-                                                          ts.available
-                                                            ? "空き"
-                                                            : "予約済み"
-                                                        }
-                                                      >
-                                                        <span
-                                                          className={`
+                                                            title={
+                                                              ts.available
+                                                                ? canBook
+                                                                  ? "空き（予約ページを開く）"
+                                                                  : "空き"
+                                                                : "予約済み"
+                                                            }
+                                                          >
+                                                            <span
+                                                              className={`
                                                       text-sm
-                                                      ${ts.available ? "text-accent" : "text-danger/60"}
+                                                      ${
+                                                        ts.available
+                                                          ? "text-accent"
+                                                          : "text-danger/60"
+                                                      }
                                                     `}
-                                                        >
-                                                          {ts.available
-                                                            ? "○"
-                                                            : "×"}
-                                                        </span>
-                                                      </div>
+                                                            >
+                                                              {ts.available
+                                                                ? "○"
+                                                                : "×"}
+                                                            </span>
+                                                          </button>
+                                                        );
+                                                      })()}
                                                     </td>
                                                   </tr>
                                                 ))
@@ -1164,30 +1285,57 @@ export default function Home() {
                                                 {slot.timeRange}
                                               </td>
                                               <td className="px-4 py-3 text-center">
-                                                <div
-                                                  className={`
+                                                {(() => {
+                                                  const canBook =
+                                                    slot.status === "○" ||
+                                                    slot.status === "●";
+                                                  const bookingUrl =
+                                                    canBook &&
+                                                    buildCivicHallDateUrl(
+                                                      studio.date,
+                                                    );
+                                                  return (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        if (
+                                                          bookingUrl &&
+                                                          canBook
+                                                        ) {
+                                                          openInNewTab(
+                                                            bookingUrl,
+                                                          );
+                                                        }
+                                                      }}
+                                                      disabled={!canBook}
+                                                      className={`
                                               inline-flex items-center justify-center w-12 h-8 rounded-md transition-all
                                               ${
-                                                slot.status === "○"
+                                                slot.status === "○" ||
+                                                slot.status === "●"
                                                   ? "bg-accent/20 border border-accent/40"
-                                                  : slot.status === "●"
-                                                    ? "bg-accent/20 border border-accent/40"
-                                                    : slot.status === "×"
-                                                      ? "bg-danger/20 border border-danger/40"
-                                                      : "bg-muted/10 border border-muted/20"
+                                                  : slot.status === "×"
+                                                    ? "bg-danger/20 border border-danger/40"
+                                                    : "bg-muted/10 border border-muted/20"
                                               }
+                                              ${
+                                                canBook
+                                                  ? "cursor-pointer hover:brightness-110"
+                                                  : "cursor-default"
+                                              }
+                                              disabled:opacity-100
                                             `}
-                                                  title={
-                                                    slot.status === "○" ||
-                                                    slot.status === "●"
-                                                      ? "空き"
-                                                      : slot.status === "×"
-                                                        ? "予約済み"
-                                                        : "受付期間外"
-                                                  }
-                                                >
-                                                  <span
-                                                    className={`
+                                                      title={
+                                                        slot.status === "○" ||
+                                                        slot.status === "●"
+                                                          ? "空き（予約サイトを開く）"
+                                                          : slot.status === "×"
+                                                            ? "予約済み"
+                                                            : "受付期間外"
+                                                      }
+                                                    >
+                                                      <span
+                                                        className={`
                                                 text-sm
                                                 ${
                                                   slot.status === "○" ||
@@ -1198,10 +1346,12 @@ export default function Home() {
                                                       : "text-muted"
                                                 }
                                               `}
-                                                  >
-                                                    {slot.status}
-                                                  </span>
-                                                </div>
+                                                      >
+                                                        {slot.status}
+                                                      </span>
+                                                    </button>
+                                                  );
+                                                })()}
                                               </td>
                                             </tr>
                                           ))}
@@ -1238,7 +1388,29 @@ export default function Home() {
                                         key={idx}
                                         className="px-2 py-3 text-center text-muted font-medium min-w-[50px]"
                                       >
-                                        {idx + 1}st
+                                        {(() => {
+                                          const roomNumber = idx + 1;
+                                          const roomHref =
+                                            buildBuzzRoomDetailUrl(
+                                              studioInfoById.get(
+                                                studio.studioId,
+                                              ),
+                                              roomNumber,
+                                            );
+                                          const label = `${roomNumber}st`;
+                                          if (!roomHref) return label;
+                                          return (
+                                            <a
+                                              href={roomHref}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="hover:underline"
+                                              title={`${label}の詳細ページを開く`}
+                                            >
+                                              {label}
+                                            </a>
+                                          );
+                                        })()}
                                       </th>
                                     ))}
                                   </tr>
@@ -1261,31 +1433,63 @@ export default function Home() {
                                           key={idx}
                                           className="px-2 py-2 text-center"
                                         >
-                                          <div
-                                            className={`
+                                          {(() => {
+                                            const studioNumber = idx + 1;
+                                            const bookingUrl = s.isAvailable
+                                              ? buildBuzzBookingUrl(
+                                                  studioInfoById.get(
+                                                    studio.studioId,
+                                                  ),
+                                                  studioNumber,
+                                                  studio.date,
+                                                )
+                                              : null;
+                                            const canBook =
+                                              s.isAvailable &&
+                                              Boolean(bookingUrl);
+                                            return (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  if (bookingUrl && canBook) {
+                                                    openInNewTab(bookingUrl);
+                                                  }
+                                                }}
+                                                disabled={!canBook}
+                                                className={`
                                           w-8 h-8 mx-auto rounded-md flex items-center justify-center transition-all
                                           ${
                                             s.isAvailable
                                               ? "bg-accent/20 border border-accent/40"
                                               : "bg-danger/20 border border-danger/40"
                                           }
+                                          ${
+                                            canBook
+                                              ? "cursor-pointer hover:brightness-110"
+                                              : "cursor-default"
+                                          }
+                                          disabled:opacity-100
                                         `}
-                                            title={
-                                              s.isAvailable
-                                                ? "空き"
-                                                : "予約済み"
-                                            }
-                                          >
-                                            {s.isAvailable ? (
-                                              <span className="text-accent text-xs">
-                                                ○
-                                              </span>
-                                            ) : (
-                                              <span className="text-danger/60 text-xs">
-                                                ×
-                                              </span>
-                                            )}
-                                          </div>
+                                                title={
+                                                  s.isAvailable
+                                                    ? canBook
+                                                      ? "空き（予約ページを開く）"
+                                                      : "空き"
+                                                    : "予約済み"
+                                                }
+                                              >
+                                                {s.isAvailable ? (
+                                                  <span className="text-accent text-xs">
+                                                    ○
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-danger/60 text-xs">
+                                                    ×
+                                                  </span>
+                                                )}
+                                              </button>
+                                            );
+                                          })()}
                                         </td>
                                       ))}
                                     </tr>
@@ -1307,6 +1511,23 @@ export default function Home() {
             ))}
           </div>
         )}
+
+        {/* 上部（検索条件）へ戻るボタン（右下固定） */}
+        <button
+          type="button"
+          onClick={() => {
+            const el = document.getElementById("search-controls");
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+            } else {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }
+          }}
+          className="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-full border border-border bg-card/90 backdrop-blur-sm text-foreground shadow-lg hover:border-accent transition-colors"
+          title="検索条件へ戻る"
+        >
+          上部に戻る
+        </button>
 
         {/* ローディング表示 */}
         {loading && (
