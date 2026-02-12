@@ -61,6 +61,15 @@ const CREA_STUDIOS = [
   },
 ];
 
+// Instabase（スペース単位）
+const INSTABASE_SPACES = [
+  {
+    id: "instabase-in-and-out",
+    name: "スタジオ in and out",
+    location: "天神駅徒歩8分（Instabase）",
+  },
+];
+
 // 時間オプション（06:00〜23:30まで30分刻み）
 // 「日付」を 06:00〜翌05:30（= 48コマ）として扱う（深夜練対応）
 const TIME_OPTIONS = [
@@ -119,6 +128,9 @@ function timeToBusinessMinutes(time: string): number {
 function openInNewTab(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
+
+// Instabase の予約遷移は `/instabase/orders`（中継HTML）に集約したため、
+// ここでの直接クロスオリジンPOSTユーティリティは不要。
 
 function parseBuzzStoreSlug(storeUrl: string): string | null {
   try {
@@ -668,6 +680,66 @@ export default function Home() {
                     <div className="text-xs text-purple-500/70 mt-0.5">
                       {studio.location}
                     </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Instabase（スペース単位） */}
+          <div className="mb-6">
+            <label className="block text-sm text-muted mb-3">
+              <span className="text-emerald-500">●</span>{" "}
+              Instabase（スペースを個別に選択）
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {INSTABASE_SPACES.map((space) => (
+                <label
+                  key={space.id}
+                  className={`
+                    flex items-center gap-3 p-4 rounded-lg border cursor-pointer transition-all
+                    ${
+                      selectedStudios.includes(space.id)
+                        ? "border-emerald-500 bg-emerald-500/10"
+                        : "border-border bg-card hover:border-muted"
+                    }
+                  `}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedStudios.includes(space.id)}
+                    onChange={() => toggleStudio(space.id)}
+                    className="sr-only"
+                  />
+                  <div
+                    className={`
+                      w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
+                      ${
+                        selectedStudios.includes(space.id)
+                          ? "border-emerald-500 bg-emerald-500"
+                          : "border-muted"
+                      }
+                    `}
+                  >
+                    {selectedStudios.includes(space.id) && (
+                      <svg
+                        className="w-3 h-3 text-background"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={3}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm">{space.name}</div>
+                    <div className="text-xs text-muted">{space.location}</div>
                   </div>
                 </label>
               ))}
@@ -1391,6 +1463,18 @@ export default function Home() {
                                       >
                                         {(() => {
                                           const roomNumber = idx + 1;
+                                          const info = studioInfoById.get(
+                                            studio.studioId,
+                                          );
+                                          // Instabase（studioCount=1想定）は「1st」見出しを出さない
+                                          if (
+                                            info?.type === "instabase-space" &&
+                                            (studio as AvailabilityResponse)
+                                              .timeSlots?.[0]?.studios
+                                              .length === 1
+                                          ) {
+                                            return "";
+                                          }
                                           const roomHref =
                                             buildBuzzRoomDetailUrl(
                                               studioInfoById.get(
@@ -1436,14 +1520,20 @@ export default function Home() {
                                         >
                                           {(() => {
                                             const studioNumber = idx + 1;
+                                            const info = studioInfoById.get(
+                                              studio.studioId,
+                                            );
+                                            const isInstabase =
+                                              info?.type === "instabase-space";
                                             const bookingUrl = s.isAvailable
-                                              ? buildBuzzBookingUrl(
+                                              ? (s.bookingUrl ??
+                                                buildBuzzBookingUrl(
                                                   studioInfoById.get(
                                                     studio.studioId,
                                                   ),
                                                   studioNumber,
                                                   studio.date,
-                                                )
+                                                ))
                                               : null;
                                             const canBook =
                                               s.isAvailable &&
@@ -1453,7 +1543,16 @@ export default function Home() {
                                                 type="button"
                                                 onClick={() => {
                                                   if (bookingUrl && canBook) {
-                                                    openInNewTab(bookingUrl);
+                                                    if (
+                                                      isInstabase &&
+                                                      bookingUrl.startsWith(
+                                                        "/instabase/orders?",
+                                                      )
+                                                    ) {
+                                                      openInNewTab(bookingUrl);
+                                                    } else {
+                                                      openInNewTab(bookingUrl);
+                                                    }
                                                   }
                                                 }}
                                                 disabled={!canBook}

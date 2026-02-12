@@ -12,6 +12,7 @@ import * as cheerio from "cheerio";
 import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse, CreaResponse } from "@/types";
 import { scrapeFukuokaCivicHall, type RoomAvailability } from "@/lib/scrapers/fukuoka-civic-hall";
 import { scrapeCrea, type CreaStudioAvailability } from "@/lib/scrapers/crea";
+import { scrapeInstabaseSpaceDayTimeSlots } from "@/lib/scrapers/instabase";
 
 type LateNightRange = { start: string; end: string };
 
@@ -23,6 +24,10 @@ const STUDIO_DATA: Record<
     url: string;
     studioCount: number;
     type?: string;
+    /**
+     * Instabase の spaceId（/space/{spaceId}/...）
+     */
+    instabaseSpaceId?: string;
     /**
      * BUZZの「部屋（1st,2st...）」に対応する数値ID（URLの /{store}/{id}/... の {id} 部分）
      * UI側で studioNumber(1-index) -> buzzStudioIds[studioNumber-1] に変換する。
@@ -85,6 +90,14 @@ const STUDIO_DATA: Record<
     url: "https://coubic.com/rentalstudiocrea",
     studioCount: 1,
     type: "crea-studio",
+  },
+  // Instabase（スペース単位）
+  "instabase-in-and-out": {
+    name: "スタジオ in and out（Instabase）",
+    url: "https://www.instabase.jp/space/3746057795/cal?planType=hourly",
+    studioCount: 1,
+    type: "instabase-space",
+    instabaseSpaceId: "3746057795",
   },
 };
 
@@ -308,6 +321,52 @@ async function scrapeCreaStudioAvailability(
   }
 }
 
+// Instabase用（スペース単位、JSON API呼び出し）
+async function scrapeInstabaseSpaceAvailability(
+  studioId: string,
+  date: string
+): Promise<AvailabilityResponse> {
+  const studioInfo = STUDIO_DATA[studioId];
+  const spaceId = studioInfo?.instabaseSpaceId;
+
+  if (!studioInfo || !spaceId) {
+    return {
+      studioId,
+      studioName: studioInfo?.name ?? "不明",
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      timeSlots: [],
+      error: "Instabase spaceId が設定されていません",
+    };
+  }
+
+  try {
+    console.log(`[Instabase] 取得開始: ${date}, spaceId: ${spaceId}`);
+    const timeSlots: TimeSlot[] = await scrapeInstabaseSpaceDayTimeSlots({
+      spaceId,
+      targetDate: date,
+    });
+
+    return {
+      studioId,
+      studioName: studioInfo.name,
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      timeSlots,
+    };
+  } catch (error) {
+    console.error(`[Instabase] エラー:`, error);
+    return {
+      studioId,
+      studioName: studioInfo.name,
+      date,
+      dayOfWeek: getDayOfWeek(date),
+      timeSlots: [],
+      error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
+    };
+  }
+}
+
 // スクレイピング関数（タイプに応じて分岐）
 async function scrapeAvailability(
   studioId: string,
@@ -335,6 +394,11 @@ async function scrapeAvailability(
   // CREA（スタジオ単位）
   if (studioInfo.type === "crea-studio") {
     return scrapeCreaStudioAvailability(studioId, date);
+  }
+
+  // Instabase（スペース単位）
+  if (studioInfo.type === "instabase-space") {
+    return scrapeInstabaseSpaceAvailability(studioId, date);
   }
 
   // BUZZ系

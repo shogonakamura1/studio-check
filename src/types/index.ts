@@ -7,6 +7,12 @@ export interface TimeSlot {
 export interface StudioAvailability {
   studioNumber: number; // 1, 2, 3, etc.
   isAvailable: boolean;
+  /**
+   * 予約ページURL（スタジオごとの取得方法に依存）
+   * - BUZZ: UI側で組み立てるため基本 undefined
+   * - Instabase: 時間枠ごとに組み立てて付与
+   */
+  bookingUrl?: string;
 }
 
 // APIレスポンスの型（BUZZ系スタジオ用）
