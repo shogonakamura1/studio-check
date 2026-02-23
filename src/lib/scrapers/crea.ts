@@ -180,8 +180,9 @@ function getPriceFromSlotName(slotName: string): number {
  */
 function formatTime(unixTimestamp: number): string {
   const date = new Date(unixTimestamp * 1000);
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const jstDate = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+  const hours = jstDate.getHours().toString().padStart(2, "0");
+  const minutes = jstDate.getMinutes().toString().padStart(2, "0");
   return `${hours}:${minutes}`;
 }
 
@@ -196,9 +197,10 @@ function toAbsoluteCoubicUrl(maybeRelativeUrl: string): string {
  */
 function formatDate(unixTimestamp: number): string {
   const date = new Date(unixTimestamp * 1000);
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const day = date.getDate().toString().padStart(2, "0");
+  const jstDate = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+  const year = jstDate.getFullYear();
+  const month = (jstDate.getMonth() + 1).toString().padStart(2, "0");
+  const day = jstDate.getDate().toString().padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
