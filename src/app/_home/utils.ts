@@ -1,4 +1,5 @@
 import type { CreaResponse } from "@/types";
+import { timeStringToMinutes } from "@/lib/date-jst";
 
 // 今日の日付を取得
 export function getTodayDate(): string {
@@ -25,10 +26,7 @@ export function formatDateLabel(dateStr: string): string {
 }
 
 // 時間を数値に変換（比較用）
-export function timeToMinutes(time: string): number {
-  const [hours, minutes] = time.split(":").map(Number);
-  return hours * 60 + minutes;
-}
+export const timeToMinutes = timeStringToMinutes;
 
 // 00:00〜05:30 は「翌日」として扱う（比較・フィルタ用）
 export function timeToBusinessMinutes(time: string): number {

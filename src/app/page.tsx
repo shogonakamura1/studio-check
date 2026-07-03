@@ -6,8 +6,7 @@ import type {
   CivicHallResponse,
   CreaResponse,
 } from "@/types";
-import type { AnyApiResponse, AvailableStudioInfo } from "@/app/_home/types";
-import { isMultiResponse } from "@/app/_home/types";
+import type { ApiResponse, AvailableStudioInfo } from "@/app/_home/types";
 import {
   dateStringToLocalDate,
   getTodayDate,
@@ -30,7 +29,7 @@ export default function Home() {
   ]);
   const [startTime, setStartTime] = useState<string>("19:00");
   const [endTime, setEndTime] = useState<string>("21:00");
-  const [data, setData] = useState<AnyApiResponse | null>(null);
+  const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedLateNight, setSelectedLateNight] = useState<string>();
@@ -139,32 +138,17 @@ export default function Home() {
         };
       });
     };
-    if (isMultiResponse(data)) {
-      return {
-        ...data,
-        dates: data.dates.map((d) => ({
-          ...d,
-          studios: filterStudios(d.studios),
-        })),
-      };
-    }
+
     return {
       ...data,
-      studios: filterStudios(data.studios),
+      dates: data.dates.map((d) => ({
+        ...d,
+        studios: filterStudios(d.studios),
+      })),
     };
   }, [data, startTime, endTime]);
 
-  const dayResults = useMemo(() => {
-    if (!filteredData) return [];
-    if (isMultiResponse(filteredData)) return filteredData.dates;
-    return [
-      {
-        date: filteredData.date,
-        dayOfWeek: filteredData.dayOfWeek,
-        studios: filteredData.studios,
-      },
-    ];
-  }, [filteredData]);
+  const dayResults = useMemo(() => filteredData?.dates ?? [], [filteredData]);
 
   // データ取得
   const fetchData = async () => {
@@ -197,10 +181,14 @@ export default function Home() {
       );
 
       if (!response.ok) {
-        throw new Error("データの取得に失敗しました");
+        // サーバー側の具体的なエラーメッセージ（400/429等）があれば表示する
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? "データの取得に失敗しました");
       }
 
-      const result = await response.json();
+      const result = (await response.json()) as ApiResponse;
       setData(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");

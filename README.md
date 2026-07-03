@@ -34,10 +34,12 @@ npm run dev
 - `npm start` - 本番サーバーを起動
 - `npm run lint` - ESLintでコードチェック
 
-### テスト（スクレイパー単体テスト）
+### テスト（Vitest）
 
-- `npm run test:civic-hall` - 福岡市民会館スクレイパーをテスト
-- `npm run test:crea` - CREAスクレイパーをテスト
+- `npm test` - 単体テストを実行（パーサー・日付ユーティリティ・レート制限等）
+- `npm run test:watch` - ウォッチモードでテストを実行
+
+テストは実装ファイルの隣に `*.test.ts` として配置しています（フィクスチャHTML/JSONによるパーサーのテストが中心）。
 
 ## APIエンドポイント
 
@@ -46,10 +48,13 @@ npm run dev
 スタジオの空き状況を取得します。
 
 **パラメータ:**
-- `studios` (必須): スタジオIDのカンマ区切り
+- `studios` (必須): スタジオIDのカンマ区切り（重複は自動で除去。未知のIDは400エラー）
 - `date` (いずれか必須): 日付（`YYYY-MM-DD`形式）
 - `dates` (いずれか必須): 日付のカンマ区切り（最大7件、重複は自動で除去）
 - `include-late-night` (任意): `1` の場合、BUZZ系のみ「翌日早朝（00:00〜05:30）を前日分に合成」して返します（深夜練向け）
+
+**制限:**
+- 簡易レート制限あり（IPごとに毎分20リクエストまで。超過時は429）
 
 **スタジオID一覧:**
 
@@ -73,24 +78,28 @@ npm run dev
 curl "http://localhost:3000/api/availability?studios=fukuokahonten,crea-daimyo&date=2026-01-27"
 ```
 
-**レスポンス例（1日指定）:**
+**レスポンス例（日付数によらず常に `dates` 配列で返ります）:**
 
 ```json
 {
-  "date": "2026-01-27",
-  "dayOfWeek": "火",
-  "studios": [
+  "dates": [
     {
-      "studioId": "fukuokahonten",
-      "studioName": "BUZZ福岡本店",
       "date": "2026-01-27",
       "dayOfWeek": "火",
-      "timeSlots": [
+      "studios": [
         {
-          "time": "06:00",
-          "studios": [
-            { "studioNumber": 1, "isAvailable": true },
-            { "studioNumber": 2, "isAvailable": false }
+          "studioId": "fukuokahonten",
+          "studioName": "BUZZ福岡本店",
+          "date": "2026-01-27",
+          "dayOfWeek": "火",
+          "timeSlots": [
+            {
+              "time": "06:00",
+              "studios": [
+                { "studioNumber": 1, "isAvailable": true },
+                { "studioNumber": 2, "isAvailable": false }
+              ]
+            }
           ]
         }
       ]
@@ -103,38 +112,22 @@ curl "http://localhost:3000/api/availability?studios=fukuokahonten,crea-daimyo&d
       "studioCount": 12,
       "lateNight": { "start": "23:30", "end": "06:00" },
       "url": "https://buzz-st.com/fukuokahonten",
+      "type": "buzz",
       "buzzStudioIds": [289, 290, 291]
     }
   ]
 }
 ```
 
-**レスポンス例（複数日）:**
-
-```json
-{
-  "dates": [
-    {
-      "date": "2026-01-27",
-      "dayOfWeek": "火",
-      "studios": []
-    },
-    {
-      "date": "2026-01-28",
-      "dayOfWeek": "水",
-      "studios": []
-    }
-  ],
-  "availableStudios": []
-}
-```
+各スタジオの取得・パースに失敗した場合は、そのスタジオのオブジェクトに `error` フィールドが付きます（他のスタジオの結果は影響を受けません）。パース結果が空になるケース（サイト構造変更等）も「空きなし」ではなく `error` として返します。
 
 ### GET `/instabase/orders`
 
 Instabase の予約導線で必要になる「予約ドラフト作成（フォームPOST）」を、このアプリ内で中継するためのページです。
 
 - ブラウザの制限やInstabase側の防御（WAF/Origin制限等）で、別オリジンからの直接POSTが失敗するケースがあるため、**同一オリジン上のページでフォームPOSTして遷移**させます
-- 受け取ったクエリ（`order[...]` 形式）をそのままhidden inputとして埋め込み、`https://www.instabase.jp/rooms/:room_uid/orders` にPOSTします
+- 転送するクエリキーは許可リスト（`order[room_uid]` / `order[bookings_attributes][0][start_at]` / `...[end_at]` / `...[plan_id]` / `order[num_of_people]`）に限定し、値の形式も検証します。許可リスト外のキーは破棄されます
+- iframe埋め込みは `frame-ancestors 'none'` / `X-Frame-Options: DENY` で禁止しています（第三者サイトからのCSRF踏み台化防止）
 - うまく遷移できない場合は、カレンダーページへのフォールバックリンクを表示します
 
 例（形だけの例です。実際にInstabaseが受け付けるパラメータに合わせてください）:
@@ -179,23 +172,26 @@ studio-check/
 │   ├── app/              # Next.js App Router
 │   │   ├── api/
 │   │   │   └── availability/
-│   │   │       └── route.ts    # 空き状況APIエンドポイント
+│   │   │       └── route.ts    # 空き状況APIエンドポイント（オーケストレーション）
 │   │   ├── instabase/
 │   │   │   └── orders/
 │   │   │       └── route.ts    # Instabase フォームPOST中継ページ
+│   │   ├── _home/              # Home画面のUIコンポーネント・定数
 │   │   ├── page.tsx            # メインページ
 │   │   ├── layout.tsx          # レイアウト
 │   │   └── globals.css         # グローバルスタイル
 │   ├── lib/
-│   │   └── scrapers/           # スクレイパー
+│   │   ├── studios.ts          # スタジオマスターデータ（単一の情報源）
+│   │   ├── date-jst.ts         # タイムゾーン安全な日付ユーティリティ
+│   │   ├── fetch-timeout.ts    # タイムアウト付きfetchラッパー
+│   │   ├── rate-limit.ts       # 簡易レート制限
+│   │   └── scrapers/           # スクレイパー（*.test.ts が単体テスト）
+│   │       ├── buzz.ts                 # BUZZスクレイパー（深夜練マージ含む）
 │   │       ├── crea.ts                 # CREAスクレイパー
 │   │       ├── fukuoka-civic-hall.ts   # 福岡市民会館スクレイパー
 │   │       └── instabase.ts            # Instabaseスクレイパー
 │   └── types/
-│       └── index.ts            # 型定義
-├── scripts/                    # テストスクリプト
-│   ├── test-civic-hall.ts
-│   └── test-crea.ts
+│       └── index.ts            # 共有型定義
 └── public/                     # 静的ファイル
 ```
 
@@ -235,6 +231,7 @@ Vercelの制限を回避したい場合、以下のサービスも利用可能�
 - **フレームワーク**: Next.js 16 (App Router)
 - **UI**: React 19, TailwindCSS 4
 - **スクレイピング**: Cheerio / HTMLパース（正規表現）/ 外部JSON API取得
+- **テスト**: Vitest
 - **言語**: TypeScript
 - **デプロイ**: Vercel対応
 
@@ -252,23 +249,22 @@ Vercelの制限を回避したい場合、以下のサービスも利用可能�
 curl -v "http://localhost:3000/api/availability?studios=fukuokahonten&date=2026-01-27"
 ```
 
-### スクレイパー単体でテスト
+### パーサーの単体テスト
 
 ```bash
-# 福岡市民会館
-npm run test:civic-hall
-
-# CREA
-npm run test:crea
+npm test
 ```
+
+サイト構造の変更でパースが空振りした場合、APIは「空きなし」ではなく該当スタジオの `error` フィールドで失敗を返します（画面上にも表示されます）。
 
 ## 開発
 
 ### 新しいスタジオを追加する
 
-1. `src/lib/scrapers/` にスクレイパーを追加
-2. `src/app/api/availability/route.ts` の `STUDIO_DATA` にスタジオ情報を追加
-3. 必要に応じて型定義を `src/types/index.ts` に追加
+1. `src/lib/scrapers/` にスクレイパーを追加（パーサーは純関数に分離し、`*.test.ts` を添える）
+2. `src/lib/studios.ts` の `STUDIO_DATA` にスタジオ情報を追加（`type` フィールドでスクレイパーを振り分け）
+3. `src/app/api/availability/route.ts` の `scrapeAvailability` に振り分けを追加
+4. 必要に応じて型定義を `src/types/index.ts` に追加
 
 ## ライセンス
 

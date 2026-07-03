@@ -1,322 +1,146 @@
 /**
  * 空き状況APIエンドポイント
- * 
+ *
  * すべてのスクレイピングをVercel内で実行
- * - BUZZスタジオ: cheerioを使用してスクレイピング
- * - 福岡市民会館: POSTリクエスト + HTMLパース
- * - CREA: Coubic APIから直接取得
+ * - BUZZスタジオ: src/lib/scrapers/buzz.ts（cheerio）
+ * - 福岡市民会館: src/lib/scrapers/fukuoka-civic-hall.ts（POST + HTMLパース）
+ * - CREA: src/lib/scrapers/crea.ts（Coubic API）
+ * - Instabase: src/lib/scrapers/instabase.ts（monthly_cal API）
+ *
+ * 同一日付の市民会館・CREAは1回の取得結果を部屋/スタジオ間で共有する
+ * （重複した外部リクエストを発生させない）。
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import * as cheerio from "cheerio";
-import type { AvailabilityResponse, TimeSlot, StudioAvailability, CivicHallResponse, CreaResponse } from "@/types";
-import { scrapeFukuokaCivicHall, type RoomAvailability } from "@/lib/scrapers/fukuoka-civic-hall";
-import { scrapeCrea, type CreaStudioAvailability } from "@/lib/scrapers/crea";
+import type {
+  AvailabilityResponse,
+  CivicHallResponse,
+  CreaResponse,
+  CreaStudioAvailability,
+  RoomAvailability,
+} from "@/types";
+import { scrapeFukuokaCivicHall } from "@/lib/scrapers/fukuoka-civic-hall";
+import { scrapeCrea } from "@/lib/scrapers/crea";
 import { scrapeInstabaseSpaceDayTimeSlots } from "@/lib/scrapers/instabase";
+import {
+  scrapeBuzzAvailability,
+  scrapeBuzzWithLateNight,
+} from "@/lib/scrapers/buzz";
+import { LATE_NIGHT_RANGES, STUDIO_DATA, isKnownStudioId } from "@/lib/studios";
+import { getDayOfWeekLabel } from "@/lib/date-jst";
+import { isRateLimited } from "@/lib/rate-limit";
 
-type LateNightRange = { start: string; end: string };
+// Vercel Serverless Functionsの設定
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
 
-// スタジオ情報のマスターデータ
-const STUDIO_DATA: Record<
-  string,
-  {
-    name: string;
-    url: string;
-    studioCount: number;
-    type?: string;
-    /**
-     * Instabase の spaceId（/space/{spaceId}/...）
-     */
-    instabaseSpaceId?: string;
-    /**
-     * BUZZの「部屋（1st,2st...）」に対応する数値ID（URLの /{store}/{id}/... の {id} 部分）
-     * UI側で studioNumber(1-index) -> buzzStudioIds[studioNumber-1] に変換する。
-     */
-    buzzStudioIds?: number[];
-  }
-> = {
-  fukuokahonten: {
-    name: "BUZZ福岡本店",
-    url: "https://buzz-st.com/fukuokahonten",
-    studioCount: 12,
-    buzzStudioIds: [289, 290, 291, 292, 293, 294, 295, 296, 298, 299, 300, 301],
-  },
-  fukuokatenjin: {
-    name: "BUZZ福岡天神",
-    url: "https://buzz-st.com/fukuokatenjin",
-    studioCount: 3,
-    buzzStudioIds: [166, 167, 168],
-  },
-  fukuokahakata: {
-    name: "BUZZ福岡博多",
-    url: "https://buzz-st.com/fukuokahakata",
-    studioCount: 3,
-    buzzStudioIds: [195, 196, 197],
-  },
-  // 市民会館（部屋単位）
-  "civichall-rehearsal": {
-    name: "福岡市民会館 リハーサル室",
-    url: "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php",
-    studioCount: 1,
-    type: "civic-hall-room",
-  },
-  "civichall-practice1": {
-    name: "福岡市民会館 練習室①",
-    url: "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php",
-    studioCount: 1,
-    type: "civic-hall-room",
-  },
-  "civichall-practice3": {
-    name: "福岡市民会館 練習室③",
-    url: "https://k3.p-kashikan.jp/fukuoka-kyotenbunka/index.php",
-    studioCount: 1,
-    type: "civic-hall-room",
-  },
-  // CREA（スタジオ単位）
-  "crea-daimyo": {
-    name: "CREA大名",
-    url: "https://coubic.com/rentalstudiocrea",
-    studioCount: 1,
-    type: "crea-studio",
-  },
-  "crea-plus": {
-    name: "CREA+",
-    url: "https://coubic.com/rentalstudiocrea",
-    studioCount: 1,
-    type: "crea-studio",
-  },
-  "crea-daimyo2": {
-    name: "CREA大名Ⅱ",
-    url: "https://coubic.com/rentalstudiocrea",
-    studioCount: 1,
-    type: "crea-studio",
-  },
-  // Instabase（スペース単位）
-  "instabase-in-and-out": {
-    name: "スタジオ in and out（Instabase）",
-    url: "https://www.instabase.jp/space/3746057795/cal?planType=hourly",
-    studioCount: 1,
-    type: "instabase-space",
-    instabaseSpaceId: "3746057795",
-  },
-};
+const MAX_DATES = 7;
+// 1リクエストで最大 スタジオ数×7日分 の外部取得が走るため、IPごとに抑える
+const MAX_REQUESTS_PER_MINUTE = 20;
+
+type StudioResult = AvailabilityResponse | CivicHallResponse | CreaResponse;
 
 /**
- * 深夜練の時間帯（スタジオ別）
- *
- * - DB等には保持せず、スクレイピング実装と同じ責務（このファイル/各スクレイパー）で定義する
- * - ここではまずBUZZ系のみ暫定対応（必要に応じてスタジオ別に調整）
+ * 同一リクエスト内で共有するスクレイプ結果のキャッシュ。
+ * 市民会館は1回のスクレイプで全部屋分、CREAは1回のAPIで全スタジオ分が
+ * 取れるため、日付ごとに1回だけ取得して振り分ける。
  */
-const LATE_NIGHT_RANGES: Record<string, LateNightRange | undefined> = {
-  // BUZZ系（例: 23:30開始）
-  fukuokahonten: { start: "23:30", end: "06:00" },
-  fukuokatenjin: { start: "23:30", end: "06:00" },
-  fukuokahakata: { start: "23:30", end: "06:00" },
-  // civic hall / CREA は深夜練対象外（必要なら追加）
+type ScrapeContext = {
+  getCivicHallRooms: (date: string) => Promise<RoomAvailability[]>;
+  getCreaStudios: (date: string) => Promise<CreaStudioAvailability[]>;
 };
 
-// 市民ホール部屋IDマッピング
-const CIVIC_HALL_ROOM_MAP: Record<string, string> = {
-  "civichall-rehearsal": "リハーサル室",
-  "civichall-practice1": "練習室①",
-  "civichall-practice3": "練習室③",
-};
+function createScrapeContext(): ScrapeContext {
+  const civicHallCache = new Map<string, Promise<RoomAvailability[]>>();
+  const creaCache = new Map<string, Promise<CreaStudioAvailability[]>>();
 
-// 曜日を取得
-function getDayOfWeek(dateStr: string): string {
-  const days = ["日", "月", "火", "水", "木", "金", "土"];
-  const date = new Date(dateStr);
-  return days[date.getDay()];
-}
-
-function timeToMinutes(time: string): number {
-  const [hours, minutes] = time.split(":").map(Number);
-  return hours * 60 + minutes;
-}
-
-function addDays(dateStr: string, days: number): string {
-  const date = new Date(dateStr);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function mergeBuzzWithNextDayEarlyMorning(
-  base: AvailabilityResponse,
-  nextDay: AvailabilityResponse
-): AvailabilityResponse {
-  const baseMap = new Map(base.timeSlots.map((ts) => [ts.time, ts]));
-  for (const ts of nextDay.timeSlots) {
-    const minutes = timeToMinutes(ts.time);
-    if (minutes >= 6 * 60) continue; // 06:00以降は翌日の通常枠なので除外
-    if (!baseMap.has(ts.time)) {
-      baseMap.set(ts.time, ts);
-    }
-  }
-
-  const merged = Array.from(baseMap.values());
-  merged.sort((a, b) => {
-    const am = timeToMinutes(a.time);
-    const bm = timeToMinutes(b.time);
-    const ak = am < 6 * 60 ? am + 24 * 60 : am;
-    const bk = bm < 6 * 60 ? bm + 24 * 60 : bm;
-    return ak - bk;
-  });
-
-  return { ...base, timeSlots: merged };
-}
-
-// BUZZスタジオ用スクレイピング（Vercel内で実行）
-async function scrapeBuzzAvailability(
-  studioId: string,
-  date: string
-): Promise<AvailabilityResponse> {
-  const studioInfo = STUDIO_DATA[studioId];
-
-  if (!studioInfo) {
-    return {
-      studioId,
-      studioName: "不明",
-      date,
-      dayOfWeek: getDayOfWeek(date),
-      timeSlots: [],
-      error: "スタジオが見つかりません",
-    };
-  }
-
-  const url = `${studioInfo.url}/${date}`;
-
-  try {
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const html = await response.text();
-    const $ = cheerio.load(html);
-
-    const timeSlots: TimeSlot[] = [];
-
-    $("table tbody tr").each((_, row) => {
-      const $row = $(row);
-      const timeCell = $row.find("td:first-child").text().trim();
-
-      if (timeCell && /^\d{2}:\d{2}$/.test(timeCell)) {
-        const studios: StudioAvailability[] = [];
-
-        $row.find("td").each((idx, cell) => {
-          if (idx === 0) return;
-
-          const $cell = $(cell);
-          const button = $cell.find("button");
-          const isAvailable = button.hasClass("reserve_modal_trigger");
-
-          studios.push({
-            studioNumber: idx,
-            isAvailable,
-          });
-        });
-
-        timeSlots.push({
-          time: timeCell,
-          studios,
-        });
+  return {
+    getCivicHallRooms(date: string) {
+      let promise = civicHallCache.get(date);
+      if (!promise) {
+        promise = scrapeFukuokaCivicHall(date);
+        civicHallCache.set(date, promise);
       }
-    });
-
-    return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
-      timeSlots,
-    };
-  } catch (error) {
-    console.error(`Error scraping ${studioId}:`, error);
-    return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
-      timeSlots: [],
-      error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
-    };
-  }
+      return promise;
+    },
+    getCreaStudios(date: string) {
+      let promise = creaCache.get(date);
+      if (!promise) {
+        promise = scrapeCrea(date);
+        creaCache.set(date, promise);
+      }
+      return promise;
+    },
+  };
 }
 
-// 福岡市民会館用（部屋単位、直接スクレイピング）
+// 福岡市民会館用（部屋単位）
 async function scrapeCivicHallRoomAvailability(
   studioId: string,
-  date: string
+  date: string,
+  ctx: ScrapeContext,
 ): Promise<CivicHallResponse> {
   const studioInfo = STUDIO_DATA[studioId];
-  const targetRoomName = CIVIC_HALL_ROOM_MAP[studioId];
+  const targetRoomName = studioInfo.civicHallRoomName;
+
+  const baseResponse = {
+    studioId,
+    studioName: studioInfo.name,
+    date,
+    dayOfWeek: getDayOfWeekLabel(date),
+  };
+
+  if (!targetRoomName) {
+    return {
+      ...baseResponse,
+      rooms: [],
+      error: "civicHallRoomName が設定されていません",
+    };
+  }
 
   try {
-    console.log(`[CivicHall] スクレイピング開始: ${date}, room: ${targetRoomName}`);
-    
-    // スクレイパーを直接呼び出し
-    const allRooms: RoomAvailability[] = await scrapeFukuokaCivicHall(date);
-    
-    // 対象の部屋のみフィルター
-    const filteredRooms = allRooms.filter(room => 
-      room.roomName.includes(targetRoomName)
+    const allRooms = await ctx.getCivicHallRooms(date);
+    const filteredRooms = allRooms.filter((room) =>
+      room.roomName.includes(targetRoomName),
     );
-
-    return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
-      rooms: filteredRooms,
-    };
+    return { ...baseResponse, rooms: filteredRooms };
   } catch (error) {
-    console.error(`[CivicHall] エラー:`, error);
+    console.error(`[CivicHall] エラー (${studioId}, ${date}):`, error);
     return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
+      ...baseResponse,
       rooms: [],
-      error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
+      error:
+        error instanceof Error ? error.message : "スクレイピングに失敗しました",
     };
   }
 }
 
-// CREA用（スタジオ単位、直接API呼び出し）
+// CREA用（スタジオ単位）
 async function scrapeCreaStudioAvailability(
   studioId: string,
-  date: string
+  date: string,
+  ctx: ScrapeContext,
 ): Promise<CreaResponse> {
   const studioInfo = STUDIO_DATA[studioId];
 
+  const baseResponse = {
+    studioId,
+    studioName: studioInfo.name,
+    date,
+    dayOfWeek: getDayOfWeekLabel(date),
+  };
+
   try {
-    console.log(`[CREA] スクレイピング開始: ${date}, studio: ${studioId}`);
-    
-    // スクレイパーを直接呼び出し（スタジオIDを指定）
-    const allStudios: CreaStudioAvailability[] = await scrapeCrea(date, [studioId]);
-    
-    return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
-      studios: allStudios,
-    };
+    const allStudios = await ctx.getCreaStudios(date);
+    const matched = allStudios.filter((s) => s.studioId === studioId);
+    return { ...baseResponse, studios: matched };
   } catch (error) {
-    console.error(`[CREA] エラー:`, error);
+    console.error(`[CREA] エラー (${studioId}, ${date}):`, error);
     return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
+      ...baseResponse,
       studios: [],
-      error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
+      error:
+        error instanceof Error ? error.message : "スクレイピングに失敗しました",
     };
   }
 }
@@ -324,45 +148,39 @@ async function scrapeCreaStudioAvailability(
 // Instabase用（スペース単位、JSON API呼び出し）
 async function scrapeInstabaseSpaceAvailability(
   studioId: string,
-  date: string
+  date: string,
 ): Promise<AvailabilityResponse> {
   const studioInfo = STUDIO_DATA[studioId];
-  const spaceId = studioInfo?.instabaseSpaceId;
+  const spaceId = studioInfo.instabaseSpaceId;
 
-  if (!studioInfo || !spaceId) {
+  const baseResponse = {
+    studioId,
+    studioName: studioInfo.name,
+    date,
+    dayOfWeek: getDayOfWeekLabel(date),
+  };
+
+  if (!spaceId) {
     return {
-      studioId,
-      studioName: studioInfo?.name ?? "不明",
-      date,
-      dayOfWeek: getDayOfWeek(date),
+      ...baseResponse,
       timeSlots: [],
       error: "Instabase spaceId が設定されていません",
     };
   }
 
   try {
-    console.log(`[Instabase] 取得開始: ${date}, spaceId: ${spaceId}`);
-    const timeSlots: TimeSlot[] = await scrapeInstabaseSpaceDayTimeSlots({
+    const timeSlots = await scrapeInstabaseSpaceDayTimeSlots({
       spaceId,
       targetDate: date,
     });
-
-    return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
-      timeSlots,
-    };
+    return { ...baseResponse, timeSlots };
   } catch (error) {
-    console.error(`[Instabase] エラー:`, error);
+    console.error(`[Instabase] エラー (${studioId}, ${date}):`, error);
     return {
-      studioId,
-      studioName: studioInfo.name,
-      date,
-      dayOfWeek: getDayOfWeek(date),
+      ...baseResponse,
       timeSlots: [],
-      error: error instanceof Error ? error.message : "スクレイピングに失敗しました",
+      error:
+        error instanceof Error ? error.message : "スクレイピングに失敗しました",
     };
   }
 }
@@ -371,53 +189,24 @@ async function scrapeInstabaseSpaceAvailability(
 async function scrapeAvailability(
   studioId: string,
   date: string,
-  includeLateNight: boolean
-): Promise<AvailabilityResponse | CivicHallResponse | CreaResponse> {
+  includeLateNight: boolean,
+  ctx: ScrapeContext,
+): Promise<StudioResult> {
   const studioInfo = STUDIO_DATA[studioId];
 
-  if (!studioInfo) {
-    return {
-      studioId,
-      studioName: "不明",
-      date,
-      dayOfWeek: getDayOfWeek(date),
-      timeSlots: [],
-      error: "スタジオが見つかりません",
-    };
+  switch (studioInfo.type) {
+    case "civic-hall-room":
+      return scrapeCivicHallRoomAvailability(studioId, date, ctx);
+    case "crea-studio":
+      return scrapeCreaStudioAvailability(studioId, date, ctx);
+    case "instabase-space":
+      return scrapeInstabaseSpaceAvailability(studioId, date);
+    case "buzz":
+      return includeLateNight
+        ? scrapeBuzzWithLateNight(studioId, date)
+        : scrapeBuzzAvailability(studioId, date);
   }
-
-  // 福岡市民会館（部屋単位）
-  if (studioInfo.type === "civic-hall-room") {
-    return scrapeCivicHallRoomAvailability(studioId, date);
-  }
-
-  // CREA（スタジオ単位）
-  if (studioInfo.type === "crea-studio") {
-    return scrapeCreaStudioAvailability(studioId, date);
-  }
-
-  // Instabase（スペース単位）
-  if (studioInfo.type === "instabase-space") {
-    return scrapeInstabaseSpaceAvailability(studioId, date);
-  }
-
-  // BUZZ系
-  if (!includeLateNight) {
-    return scrapeBuzzAvailability(studioId, date);
-  }
-
-  // 深夜練のため、翌日早朝（00:00〜05:30）を前日分に合成する
-  const base = await scrapeBuzzAvailability(studioId, date);
-  const nextDate = addDays(date, 1);
-  const next = await scrapeBuzzAvailability(studioId, nextDate);
-  return mergeBuzzWithNextDayEarlyMorning(base, next);
 }
-
-// Vercel Serverless Functionsの設定
-export const maxDuration = 60;
-export const dynamic = 'force-dynamic';
-
-const MAX_DATES = 7;
 
 function isValidDateString(dateStr: string): boolean {
   // YYYY-MM-DD のみ許可（toISOStringのslice(0,10)互換）
@@ -426,9 +215,23 @@ function isValidDateString(dateStr: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === dateStr;
 }
 
+function getClientIp(request: NextRequest): string {
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
+  );
+}
+
 // GET /api/availability?studios=fukuokahonten,crea-daimyo&date=2026-01-20
 // GET /api/availability?studios=fukuokahonten,crea-daimyo&dates=2026-01-20,2026-01-21
+// レスポンスは日付数によらず常に { dates: [...], availableStudios: [...] } 形式
 export async function GET(request: NextRequest) {
+  if (isRateLimited(getClientIp(request), MAX_REQUESTS_PER_MINUTE)) {
+    return NextResponse.json(
+      { error: "リクエストが多すぎます。しばらく待ってから再試行してください" },
+      { status: 429 },
+    );
+  }
+
   const searchParams = request.nextUrl.searchParams;
   const studiosParam = searchParams.get("studios");
   const date = searchParams.get("date");
@@ -438,16 +241,33 @@ export async function GET(request: NextRequest) {
   if (!studiosParam || (!date && !datesParam)) {
     return NextResponse.json(
       { error: "studios と date（または dates）パラメータが必要です" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
-  const studioIds = studiosParam.split(",").filter(Boolean);
+  // 重複を除去し、既知のスタジオIDのみ許可する
+  // （無制限に受け付けると外部サイトへのリクエスト増幅に悪用できるため）
+  const studioIds = Array.from(
+    new Set(
+      studiosParam
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  );
 
   if (studioIds.length === 0) {
     return NextResponse.json(
       { error: "少なくとも1つのスタジオを指定してください" },
-      { status: 400 }
+      { status: 400 },
+    );
+  }
+
+  const unknownStudioIds = studioIds.filter((id) => !isKnownStudioId(id));
+  if (unknownStudioIds.length > 0) {
+    return NextResponse.json(
+      { error: `不明なスタジオIDです: ${unknownStudioIds.join(", ")}` },
+      { status: 400 },
     );
   }
 
@@ -458,8 +278,8 @@ export async function GET(request: NextRequest) {
         datesParam
           .split(",")
           .map((s) => s.trim())
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     );
   } else if (date) {
     dates = [date.trim()];
@@ -469,19 +289,19 @@ export async function GET(request: NextRequest) {
   if (invalid.length > 0) {
     return NextResponse.json(
       { error: `日付形式が不正です: ${invalid.join(", ")}` },
-      { status: 400 }
+      { status: 400 },
     );
   }
   if (dates.length === 0) {
     return NextResponse.json(
       { error: "少なくとも1つの日付を指定してください" },
-      { status: 400 }
+      { status: 400 },
     );
   }
   if (dates.length > MAX_DATES) {
     return NextResponse.json(
       { error: `日付は最大${MAX_DATES}件まで指定できます` },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -496,34 +316,25 @@ export async function GET(request: NextRequest) {
       buzzStudioIds: info.buzzStudioIds,
     }));
 
+    const ctx = createScrapeContext();
+
     // 複数日付は「日付ごとに」スタジオを並列、日付自体は直列（過負荷回避）
     const perDateResults: Array<{
       date: string;
       dayOfWeek: string;
-      studios: Array<AvailabilityResponse | CivicHallResponse | CreaResponse>;
+      studios: StudioResult[];
     }> = [];
 
     for (const d of dates) {
       const studios = await Promise.all(
         studioIds.map((studioId) =>
-          scrapeAvailability(studioId.trim(), d, includeLateNight)
-        )
+          scrapeAvailability(studioId, d, includeLateNight, ctx),
+        ),
       );
       perDateResults.push({
         date: d,
-        dayOfWeek: getDayOfWeek(d),
+        dayOfWeek: getDayOfWeekLabel(d),
         studios,
-      });
-    }
-
-    // 後方互換: 日付が1つなら従来形も返す（UI側が古い場合でも動く）
-    if (perDateResults.length === 1) {
-      const only = perDateResults[0]!;
-      return NextResponse.json({
-        date: only.date,
-        dayOfWeek: only.dayOfWeek,
-        studios: only.studios,
-        availableStudios,
       });
     }
 
@@ -532,12 +343,13 @@ export async function GET(request: NextRequest) {
       availableStudios,
     });
   } catch (error) {
-    console.error('Scraping error:', error);
+    console.error("Scraping error:", error);
     return NextResponse.json(
-      { 
-        error: error instanceof Error ? error.message : 'スクレイピングに失敗しました',
+      {
+        error:
+          error instanceof Error ? error.message : "スクレイピングに失敗しました",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
