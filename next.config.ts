@@ -16,11 +16,14 @@ const securityHeaders = [
           key: "Content-Security-Policy",
           value: [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline'",
+            // GA4(gtag.js) は googletagmanager から読み込む
+            "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com",
             "style-src 'self' 'unsafe-inline'",
-            "img-src 'self' data:",
+            // GA4 は計測ビーコンを画像で送る場合がある
+            "img-src 'self' data: https://www.googletagmanager.com https://*.google-analytics.com",
             "font-src 'self'",
-            "connect-src 'self'",
+            // GA4 の計測データ送信先
+            "connect-src 'self' https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com",
             "frame-ancestors 'none'",
             "base-uri 'self'",
             // /instabase/orders の中継フォームが instabase.jp へPOSTする
