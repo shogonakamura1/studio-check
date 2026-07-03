@@ -216,9 +216,18 @@ function isValidDateString(dateStr: string): boolean {
 }
 
 function getClientIp(request: NextRequest): string {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"
-  );
+  // x-forwarded-for の先頭値はクライアントが自由に付与でき、
+  // 毎回変えるとレート制限のバケットを増殖させて回避できてしまう。
+  // Vercel が上書きして設定する x-real-ip を優先する
+  // （クライアントが送っても Vercel 側で実IPに置き換わる）。
+  // ローカル開発など x-real-ip が無い場合のみ x-forwarded-for にフォールバックする。
+  // 注: インメモリ＋ヘッダ由来のキーは best-effort。厳密な保証には
+  // 共有ストア（Upstash 等）＋信頼できるIPが必要。
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  return forwardedFor?.split(",")[0]?.trim() || "unknown";
 }
 
 // GET /api/availability?studios=fukuokahonten,crea-daimyo&date=2026-01-20
