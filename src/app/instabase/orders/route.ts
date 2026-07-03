@@ -13,8 +13,33 @@ export const dynamic = "force-dynamic";
  *
  * 受け取るクエリ:
  * - 例: /instabase/orders?order[room_uid]=...&order[bookings_attributes][0][start_at]=...&...
- *   （Instabase が受け付ける order[...] 形式をそのまま hidden input に流し込む）
+ *
+ * セキュリティ:
+ * - 転送するキーは許可リストに限定し、値の形式も検証する
+ *   （任意のフィールドをInstabaseのフォームへ注入させない）
+ * - frame-ancestors 'none' / X-Frame-Options: DENY を返し、
+ *   第三者サイトの隠しiframeからの自動送信（CSRF踏み台化）を防ぐ
  */
+
+/** 転送を許可するクエリキーと値の検証ルール */
+const ALLOWED_PARAMS: Record<string, RegExp> = {
+  "order[room_uid]": /^[0-9]+$/,
+  // "YYYY-MM-DD HH:MM"
+  "order[bookings_attributes][0][start_at]": /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+  "order[bookings_attributes][0][end_at]": /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+  "order[bookings_attributes][0][plan_id]": /^[0-9]+$/,
+  "order[num_of_people]": /^[0-9]{1,3}$/,
+};
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 export function GET(req: NextRequest) {
   const url = new URL(req.url);
   const params = url.searchParams;
@@ -25,6 +50,20 @@ export function GET(req: NextRequest) {
       { error: "order[room_uid] が不正です" },
       { status: 400 },
     );
+  }
+
+  // 許可リストにあるキーのみ、形式検証を通った値だけを転送する
+  const forwardedParams: Array<[string, string]> = [];
+  for (const [name, pattern] of Object.entries(ALLOWED_PARAMS)) {
+    const value = params.get(name);
+    if (value === null) continue;
+    if (!pattern.test(value)) {
+      return NextResponse.json(
+        { error: `${name} の形式が不正です` },
+        { status: 400 },
+      );
+    }
+    forwardedParams.push([name, value]);
   }
 
   const action = `https://www.instabase.jp/rooms/${roomUid}/orders`;
@@ -50,19 +89,12 @@ export function GET(req: NextRequest) {
     return `https://www.instabase.jp/space/${roomUid}/cal?${q.toString()}#bookingInfo`;
   })();
 
-  // hidden inputs を構築（キーはそのまま）
-  const inputsHtml = Array.from(params.entries())
-    .map(([name, value]) => {
-      // 最低限のエスケープ
-      const esc = (s: string) =>
-        s
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#39;");
-      return `<input type="hidden" name="${esc(name)}" value="${esc(value)}" />`;
-    })
+  // hidden inputs を構築（許可リスト通過分のみ）
+  const inputsHtml = forwardedParams
+    .map(
+      ([name, value]) =>
+        `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}" />`,
+    )
     .join("\n");
 
   const html = `<!doctype html>
@@ -119,7 +151,10 @@ export function GET(req: NextRequest) {
       "Content-Type": "text/html; charset=utf-8",
       "Referrer-Policy": "no-referrer",
       "X-Robots-Tag": "noindex, nofollow",
+      // 第三者サイトのiframeに埋め込んでの自動POST（CSRF踏み台化）を防ぐ
+      "X-Frame-Options": "DENY",
+      "Content-Security-Policy": "frame-ancestors 'none'",
+      "Cache-Control": "no-store",
     },
   });
 }
-

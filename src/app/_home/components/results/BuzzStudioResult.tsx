@@ -14,6 +14,9 @@ type Props = {
 };
 
 export function BuzzStudioResult({ studio, studioInfoById }: Props) {
+  // 深夜練の開始時刻はAPIの設定値（lateNight.start）から取得する
+  const lateNightStart = studioInfoById.get(studio.studioId)?.lateNight?.start;
+
   return (
     <>
       {studio.timeSlots && studio.timeSlots.length > 0 ? (
@@ -68,14 +71,14 @@ export function BuzzStudioResult({ studio, studioInfoById }: Props) {
                   className="border-b border-border/50 hover:bg-card-hover transition-colors"
                 >
                   <td className="px-4 py-2 font-mono text-muted sticky left-0 bg-card">
-                    {slot.time === "23:30" ? "深夜練" : slot.time}
+                    {lateNightStart && slot.time === lateNightStart
+                      ? "深夜練"
+                      : slot.time}
                   </td>
                   {slot.studios.map((s, idx) => (
                     <td key={idx} className="px-2 py-2 text-center">
                       {(() => {
                         const studioNumber = idx + 1;
-                        const info = studioInfoById.get(studio.studioId);
-                        const isInstabase = info?.type === "instabase-space";
                         const bookingUrl = s.isAvailable
                           ? (s.bookingUrl ??
                             buildBuzzBookingUrl(
@@ -90,14 +93,7 @@ export function BuzzStudioResult({ studio, studioInfoById }: Props) {
                             type="button"
                             onClick={() => {
                               if (bookingUrl && canBook) {
-                                if (
-                                  isInstabase &&
-                                  bookingUrl.startsWith("/instabase/orders?")
-                                ) {
-                                  openInNewTab(bookingUrl);
-                                } else {
-                                  openInNewTab(bookingUrl);
-                                }
+                                openInNewTab(bookingUrl);
                               }
                             }}
                             disabled={!canBook}

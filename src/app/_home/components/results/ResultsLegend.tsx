@@ -13,10 +13,10 @@ export function ResultsLegend() {
           <span className="text-muted">予約済み</span>
         </div>
       </div>
-      <div className="mt-2 text-sm text-danger">
+      <ul className="mt-2 text-sm text-danger list-disc list-inside">
         <li>○ボタンを押すと直接予約ページに飛びます。</li>
         <li>各スタジオや部屋の名前を押すと、その詳細ページに移動します。</li>
-      </div>
+      </ul>
     </>
   );
 }

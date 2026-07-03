@@ -39,6 +39,14 @@ export function CreaStudioResult({ studio }: Props) {
                     </h6>
                     <span className="text-purple-400 text-sm font-mono">
                       ¥{slot.price.toLocaleString()}
+                      {slot.priceIsEstimate && (
+                        <span
+                          className="text-muted text-xs ml-1"
+                          title="APIから価格を取得できなかったため参考価格を表示しています"
+                        >
+                          （参考）
+                        </span>
+                      )}
                     </span>
                   </div>
                   <div className="overflow-x-auto">
