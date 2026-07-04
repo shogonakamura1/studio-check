@@ -15,7 +15,7 @@ import {
   timeToMinutes,
 } from "@/app/_home/utils";
 import { BackToTopButton } from "@/app/_home/components/BackToTopButton";
-import { HomeFooter } from "@/app/_home/components/HomeFooter";
+import { SiteFooter } from "@/app/_components/SiteFooter";
 import { HomeHeader } from "@/app/_home/components/HomeHeader";
 import { ResultsSection } from "@/app/_home/components/ResultsSection";
 import { SearchControls } from "@/app/_home/components/SearchControls";
@@ -231,6 +231,14 @@ export default function Home() {
       <HomeHeader />
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {/* サイト紹介（検索エンジン・初訪問者向けの説明文） */}
+        <p className="text-sm text-muted leading-relaxed mb-6 max-w-3xl">
+          Studio Checkは、福岡のレンタルスタジオ・ダンススタジオ
+          （BUZZ福岡本店・天神・博多、福岡市民会館、CREA、スタジオin and
+          out）の空き状況をまとめて検索できる無料ツールです。
+          日付と時間帯を選んで検索すると、各公式サイトの最新の空き枠を一括で確認し、そのまま予約ページへ進めます。
+        </p>
+
         {/* コントロールパネル */}
         <SearchControls
           selectedStudios={selectedStudios}
@@ -285,7 +293,7 @@ export default function Home() {
       </main>
 
       {/* フッター */}
-      <HomeFooter />
+      <SiteFooter />
     </div>
   );
 }
