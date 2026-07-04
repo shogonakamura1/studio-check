@@ -176,12 +176,23 @@ studio-check/
 │   │   ├── instabase/
 │   │   │   └── orders/
 │   │   │       └── route.ts    # Instabase フォームPOST中継ページ
+│   │   ├── studios/            # スタジオ一覧・スタジオ別ページ（SEO用静的ページ）
+│   │   │   ├── page.tsx
+│   │   │   └── [studioId]/page.tsx
+│   │   ├── guide/              # 使い方・FAQページ（FAQ構造化データ付き）
+│   │   │   └── page.tsx
+│   │   ├── _components/        # 共通コンポーネント（SiteHeader/SiteFooter/JsonLd）
 │   │   ├── _home/              # Home画面のUIコンポーネント・定数
 │   │   ├── page.tsx            # メインページ
-│   │   ├── layout.tsx          # レイアウト
+│   │   ├── layout.tsx          # レイアウト（メタ情報・構造化データ・GA4）
+│   │   ├── robots.ts           # robots.txt 自動生成
+│   │   ├── sitemap.ts          # sitemap.xml 自動生成
+│   │   ├── opengraph-image.tsx # OG画像の動的生成
 │   │   └── globals.css         # グローバルスタイル
 │   ├── lib/
+│   │   ├── site.ts             # サイト名・URL・説明（メタ情報の単一情報源）
 │   │   ├── studios.ts          # スタジオマスターデータ（単一の情報源）
+│   │   ├── studio-content.ts   # スタジオ別ページの静的コンテンツ
 │   │   ├── date-jst.ts         # タイムゾーン安全な日付ユーティリティ
 │   │   ├── fetch-timeout.ts    # タイムアウト付きfetchラッパー
 │   │   ├── rate-limit.ts       # 簡易レート制限

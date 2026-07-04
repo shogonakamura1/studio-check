@@ -1,19 +1,18 @@
-"use client";
-
 import Link from "next/link";
 
-export function HomeHeader() {
+/**
+ * サブページ（/studios, /guide 等）用の共通ヘッダー。
+ * ホームは h1 を含む HomeHeader を使う（h1はページごとに1つ）。
+ */
+export function SiteHeader() {
   return (
     <header className="border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 rounded-full bg-accent animate-pulse-glow" />
-          <h1 className="text-xl font-bold tracking-tight">
+          <Link href="/" className="text-xl font-bold tracking-tight">
             STUDIO<span className="text-accent">_</span>CHECK
-            <span className="hidden md:inline text-muted text-sm ml-3 font-normal tracking-normal">
-              福岡のスタジオ空き状況を一括検索
-            </span>
-          </h1>
+          </Link>
           <nav
             aria-label="サイト内ナビゲーション"
             className="ml-auto flex items-center gap-4 text-sm"
