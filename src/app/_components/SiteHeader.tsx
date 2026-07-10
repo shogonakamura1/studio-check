@@ -1,8 +1,8 @@
 import Link from "next/link";
 
 /**
- * サブページ（/studios, /guide 等）用の共通ヘッダー。
- * ホームは h1 を含む HomeHeader を使う（h1はページごとに1つ）。
+ * 全ページ共通のヘッダー。
+ * h1 は各ページの <main> 内に置く（h1はページごとに1つ）。
  */
 export function SiteHeader() {
   return (
