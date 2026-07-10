@@ -16,7 +16,7 @@ import {
 } from "@/app/_home/utils";
 import { BackToTopButton } from "@/app/_home/components/BackToTopButton";
 import { SiteFooter } from "@/app/_components/SiteFooter";
-import { HomeHeader } from "@/app/_home/components/HomeHeader";
+import { SiteHeader } from "@/app/_components/SiteHeader";
 import { ResultsSection } from "@/app/_home/components/ResultsSection";
 import { SearchControls } from "@/app/_home/components/SearchControls";
 
@@ -228,9 +228,13 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background grid-pattern">
       {/* ヘッダー */}
-      <HomeHeader />
+      <SiteHeader />
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        <h1 className="text-2xl font-bold mb-4">
+          福岡のレンタルスタジオ空き状況を一括検索
+        </h1>
+
         {/* サイト紹介（検索エンジン・初訪問者向けの説明文） */}
         <p className="text-sm text-muted leading-relaxed mb-6 max-w-3xl">
           Studio Checkは、福岡のレンタルスタジオ・ダンススタジオ
